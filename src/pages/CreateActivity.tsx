@@ -84,6 +84,7 @@ export default function CreateActivity() {
       storeAddress,
       startTime,
       playerCount,
+      maxPlayers: playerCount,
       currentPlayers: 1,
       organizer: currentUser,
       carRecruitment: { carsNeeded, seatsPerCar, fuelSubsidy, allowPickup },

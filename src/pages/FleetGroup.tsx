@@ -1,418 +1,757 @@
-import { useState } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  Car,
   Users,
   MapPin,
-  Clock,
-  Share2,
-  CheckCircle,
-  ArrowRight,
-  ArrowLeft,
+  Car,
+  UserCheck,
+  ArrowLeftRight,
   ChevronDown,
   ChevronUp,
-  AlertCircle,
+  Share2,
+  RefreshCw,
   MoveRight,
-  UserMinus,
-  Save,
+  Plus,
+  X,
+  Clock,
+  UserX,
+  AlertTriangle,
+  UserPlus,
+  Scissors,
 } from 'lucide-react'
 import { format } from 'date-fns'
-import { zhCN } from 'date-fns/locale'
+import { AnimatePresence, motion } from 'framer-motion'
 import { useStore } from '@/store/useStore'
-import PageHeader from '@/components/PageHeader'
-import UserAvatar from '@/components/UserAvatar'
 import { pickupAreas } from '@/data/mock'
-import type { FleetPassenger } from '@/types'
+import type { FleetPassenger, BoardingStatus as BoardingStatusType } from '@/types'
+
+const statusMeta: Record<
+  BoardingStatusType,
+  { label: string; icon: typeof UserCheck; color: string; bg: string; border: string }
+> = {
+  waiting: {
+    label: '待上车',
+    icon: Clock,
+    color: 'text-neon-magenta',
+    bg: 'bg-neon-magenta/10',
+    border: 'border-neon-magenta/30',
+  },
+  boarded: {
+    label: '已上车',
+    icon: UserCheck,
+    color: 'text-neon-green',
+    bg: 'bg-neon-green/10',
+    border: 'border-neon-green/30',
+  },
+  missed: {
+    label: '漏接',
+    icon: AlertTriangle,
+    color: 'text-neon-orange',
+    bg: 'bg-neon-orange/10',
+    border: 'border-neon-orange/30',
+  },
+  no_show: {
+    label: '临时不上',
+    icon: UserX,
+    color: 'text-neon-red',
+    bg: 'bg-neon-red/10',
+    border: 'border-neon-red/30',
+  },
+}
 
 export default function FleetGroup() {
-  const { activityId } = useParams<{ activityId: string }>()
+  const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const getActivity = useStore((s) => s.getActivity)
-  const generateFleetGroups = useStore((s) => s.generateFleetGroups)
-  const confirmCarOffer = useStore((s) => s.confirmCarOffer)
-  const updatePlayerPickupArea = useStore((s) => s.updatePlayerPickupArea)
-  const movePassenger = useStore((s) => s.movePassenger)
-  const activity = getActivity(activityId || '')
+  const { activity, fleetGroups, carOffers, setPassengerBoardingStatus, movePassenger, generateFleetGroups, confirmCarOfferAndAddToFleet, updatePlayerPickupArea } = useStore(
+    (s) => {
+      const a = s.activities.find((act) => act.id === id)
+      return {
+        activity: a,
+        fleetGroups: a?.fleetGroups || [],
+        carOffers: a?.carOffers || [],
+        setPassengerBoardingStatus: s.setPassengerBoardingStatus,
+        movePassenger: s.movePassenger,
+        generateFleetGroups: s.generateFleetGroups,
+        confirmCarOfferAndAddToFleet: s.confirmCarOfferAndAddToFleet,
+        updatePlayerPickupArea: s.updatePlayerPickupArea,
+      }
+    }
+  )
 
   const [activeTab, setActiveTab] = useState<'outbound' | 'return'>('outbound')
-  const [showSharePreview, setShowSharePreview] = useState(false)
-  const [expandPlayers, setExpandPlayers] = useState(true)
-  const [moveTarget, setMoveTarget] = useState<{
-    passenger: FleetPassenger
-    fromCarOfferId: string
-  } | null>(null)
+  const [expandArea, setExpandArea] = useState(false)
+  const [movingPassenger, setMovingPassenger] = useState<FleetPassenger | null>(null)
+  const [movingFromCarId, setMovingFromCarId] = useState<string | null>(null)
+  const [editingUserId, setEditingUserId] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (saved) {
+      const t = setTimeout(() => setSaved(false), 2500)
+      return () => clearTimeout(t)
+    }
+  }, [saved])
+  useEffect(() => {
+    if (error) {
+      const t = setTimeout(() => setError(null), 3500)
+      return () => clearTimeout(t)
+    }
+  }, [error])
+
+  const currentGroup = fleetGroups.find((fg) => fg.type === activeTab)
+  const pendingCarOffers = carOffers.filter((co) => co.status === 'pending')
+
+  const globalBoardingStats = useMemo(() => {
+    const stats: Record<BoardingStatusType, number> = {
+      waiting: 0,
+      boarded: 0,
+      missed: 0,
+      no_show: 0,
+    }
+    if (!currentGroup) return stats
+    for (const car of currentGroup.cars) {
+      for (const p of car.passengers) {
+        const st = p.boardingStatus || 'waiting'
+        stats[st] = (stats[st] || 0) + 1
+      }
+    }
+    return stats
+  }, [currentGroup])
+
+  const totalPassengers =
+    globalBoardingStats.waiting +
+    globalBoardingStats.boarded +
+    globalBoardingStats.missed +
+    globalBoardingStats.no_show
+
+  const areaStats = useMemo(() => {
+    if (!activity) return []
+    const counts = new Map<string, number>()
+    for (const p of activity.players) {
+      const key = p.pickupArea || '未指定'
+      counts.set(key, (counts.get(key) || 0) + 1)
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])
+  }, [activity])
 
   if (!activity) {
     return (
-      <div className="min-h-screen bg-night-900 flex items-center justify-center">
-        <p className="text-gray-500">活动不存在</p>
+      <div className="min-h-screen bg-ink-night flex items-center justify-center text-neon-lavender">
+        活动不存在
       </div>
     )
   }
 
-  const outboundGroup = activity.fleetGroups.find((fg) => fg.type === 'outbound')
-  const returnGroup = activity.fleetGroups.find((fg) => fg.type === 'return')
-  const currentGroup = activeTab === 'outbound' ? outboundGroup : returnGroup
-  const pendingOffers = activity.carOffers.filter((co) => co.status === 'pending')
-  const playersWithNoCar = activity.players.filter(
-    (p) => !activity.carOffers.some((co) => co.driver.id === p.user.id)
-  )
+  const handleShare = () => {
+    if (!currentGroup) return
+    const text = [
+      `🎭 ${activity.scriptName} 拼车名单（${activeTab === 'outbound' ? '去程' : '返程'}）`,
+      `⏰ ${format(new Date(currentGroup.departureTime), 'MM月dd日 HH:mm')} 发车`,
+      '',
+      ...currentGroup.cars.map((car, idx) => {
+        const co = activity.carOffers.find((c) => c.id === car.carOfferId)
+        const carCap = co?.availableSeats || car.passengers.length
+        const boardingStats = car.passengers.reduce(
+          (acc, p) => {
+            const s = p.boardingStatus || 'waiting'
+            acc[s] = (acc[s] || 0) + 1
+            return acc
+          },
+          {} as Record<string, number>
+        )
+        const summaryParts = []
+        if (boardingStats.boarded) summaryParts.push(`✓${boardingStats.boarded}已上车`)
+        if (boardingStats.waiting) summaryParts.push(`◷${boardingStats.waiting}待上车`)
+        if (boardingStats.missed) summaryParts.push(`⚠${boardingStats.missed}漏接`)
+        if (boardingStats.no_show) summaryParts.push(`✗${boardingStats.no_show}临时不上`)
 
-  const getCarOffer = (carOfferId: string) =>
-    activity.carOffers.find((co) => co.id === carOfferId)
-
-  const getRemainingSeats = (carOfferId: string, passengerCount: number) => {
-    const offer = getCarOffer(carOfferId)
-    if (!offer) return 0
-    return offer.availableSeats - passengerCount
+        return [
+          `【车${idx + 1}】${car.driver.nickname} 载 ${car.passengers.length}/${carCap}人${summaryParts.length ? `（${summaryParts.join(' / ')}）` : ''}`,
+          `路线: ${car.route}`,
+          ...car.passengers.map((p, pi) => {
+            const st = p.boardingStatus || 'waiting'
+            const mark =
+              st === 'boarded' ? '✓' : st === 'missed' ? '⚠' : st === 'no_show' ? '✗' : '◷'
+            return `  ${pi + 1}. ${mark} ${p.user.nickname}（${p.pickupArea}）`
+          }),
+        ].join('\n')
+      }),
+      '',
+      `📍集合：${currentGroup.meetingPoint}`,
+    ].join('\n')
+    navigator.clipboard?.writeText(text)
+    setSaved(true)
   }
 
-  const handleGenerate = () => {
-    generateFleetGroups(activity.id)
+  const handleMove = (toCarOfferId: string) => {
+    if (!movingPassenger || !movingFromCarId || !activity) return
+    const ok = movePassenger(activity.id, activeTab, movingPassenger.user.id, movingFromCarId, toCarOfferId)
+    setMovingPassenger(null)
+    setMovingFromCarId(null)
+    if (!ok) setError('该车辆已满员或超员，请先减少乘客')
   }
 
-  const handleConfirm = (offerId: string) => {
-    confirmCarOffer(activity.id, offerId)
-  }
-
-  const handleMoveClick = (
-    passenger: FleetPassenger,
-    fromCarOfferId: string
-  ) => {
-    setMoveTarget({ passenger, fromCarOfferId })
-  }
-
-  const handleMoveConfirm = (toCarOfferId: string) => {
-    if (!moveTarget) return
-    movePassenger(
-      activity.id,
-      activeTab,
-      moveTarget.passenger.user.id,
-      moveTarget.fromCarOfferId,
-      toCarOfferId
-    )
-    setMoveTarget(null)
-  }
-
-  const generateShareText = () => {
-    if (!currentGroup) return ''
-    let text = `🚗 ${activity.title} - ${activeTab === 'outbound' ? '去程' : '返程'}车队\n`
-    text += `📍 ${currentGroup.meetingPoint}\n`
-    text += `⏰ ${format(new Date(currentGroup.departureTime), 'M月d日 HH:mm', { locale: zhCN })}\n\n`
-    currentGroup.cars.forEach((car, i) => {
-      const allAreas = Array.from(
-        new Set([car.driverPickupArea, ...car.passengers.map((p) => p.pickupArea)])
-      )
-      text += `🚙 ${i + 1}号车 - ${car.driver.nickname}\n`
-      text += `   接人区域: ${allAreas.join('、')}\n`
-      text += `   路线: ${car.route}\n`
-      if (car.passengers.length > 0) {
-        text += `   乘客: ${car.passengers.map((p) => `${p.user.nickname}(${p.pickupArea})`).join('、')}\n`
-      } else {
-        text += `   乘客: 无\n`
-      }
-      text += '\n'
-    })
-    return text
+  const handleStatusChange = (carOfferId: string, passengerUserId: string, newStatus: BoardingStatusType) => {
+    if (!activity) return
+    setPassengerBoardingStatus(activity.id, activeTab, carOfferId, passengerUserId, newStatus)
   }
 
   return (
-    <div className="min-h-screen bg-night-900 pb-8">
-      <PageHeader title="车队分组" />
+    <div className="min-h-screen bg-ink-night pb-24">
+      <AnimatePresence>
+        {saved && (
+          <motion.div
+            initial={{ opacity: 0, y: -40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -40 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-neon-green/90 text-ink-deep font-semibold shadow-lg shadow-neon-green/30 backdrop-blur-sm"
+          >
+            ✓ 名单已复制到剪贴板
+          </motion.div>
+        )}
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -40 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-neon-red/90 text-ink-deep font-semibold shadow-lg shadow-neon-red/30 backdrop-blur-sm"
+          >
+            ⚠ {error}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      <div className="max-w-lg mx-auto px-4 space-y-4 mt-4">
-        <div className="glass-card p-4">
-          <h3 className="font-display text-lg text-white mb-2">{activity.title}</h3>
-          <p className="text-sm text-gray-400">{activity.storeName}</p>
+      <header className="glass-card sticky top-0 z-40 px-5 pt-6 pb-4 border-b border-neon-magenta/10">
+        <div className="flex items-center gap-3 mb-3">
+          <button
+            onClick={() => navigate(-1)}
+            className="p-2 rounded-xl bg-ink-deep/80 border border-neon-magenta/20 text-neon-lavender hover:text-neon-magenta"
+          >
+            <ChevronDown className="w-5 h-5 rotate-90" />
+          </button>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-xl font-display text-neon-magenta truncate">{activity.scriptName}</h1>
+            <p className="text-sm text-neon-lavender/70">
+              {fleetGroups.length > 0 ? '车队分组与临场调度' : '尚未生成车队分组'}
+            </p>
+          </div>
         </div>
 
-        {pendingOffers.length > 0 && (
-          <div className="glass-card p-4 border-neon-gold/30">
-            <h3 className="font-display text-lg gold-text mb-3 flex items-center gap-2">
-              <AlertCircle size={16} /> 待确认车源
-            </h3>
-            <div className="space-y-3">
-              {pendingOffers.map((offer) => (
-                <div key={offer.id} className="flex items-center justify-between bg-night-700/50 rounded-xl p-3">
-                  <div className="flex items-center gap-3">
-                    <UserAvatar nickname={offer.driver.nickname} isCarOwner size="sm" />
-                    <div>
-                      <p className="text-sm text-white">{offer.driver.nickname}</p>
-                      <p className="text-xs text-gray-400">
-                        {offer.pickupArea} · 可坐{offer.availableSeats}人{offer.waitAfterGame ? ' · 等散场' : ''}
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleConfirm(offer.id)}
-                    className="px-3 py-1.5 bg-neon-green/20 text-neon-green rounded-full text-xs font-medium hover:bg-neon-green/30 transition-colors flex items-center gap-1"
-                  >
-                    <CheckCircle size={12} /> 确认
-                  </button>
+        {fleetGroups.length > 0 && (
+          <div className="grid grid-cols-4 gap-2 mt-4">
+            {(Object.keys(statusMeta) as BoardingStatusType[]).map((st) => {
+              const meta = statusMeta[st]
+              const Icon = meta.icon
+              return (
+                <div
+                  key={st}
+                  className={`${meta.bg} ${meta.border} border rounded-2xl p-3 flex flex-col items-center`}
+                >
+                  <Icon className={`w-5 h-5 mb-1 ${meta.color}`} />
+                  <div className={`text-xl font-bold ${meta.color}`}>{globalBoardingStats[st]}</div>
+                  <div className="text-[10px] text-neon-lavender/70">{meta.label}</div>
                 </div>
-              ))}
-            </div>
+              )
+            })}
           </div>
         )}
 
-        <div className="glass-card p-4">
-          <button
-            onClick={() => setExpandPlayers(!expandPlayers)}
-            className="w-full flex items-center justify-between"
-          >
-            <h3 className="font-display text-lg text-white flex items-center gap-2">
-              <Users size={16} className="text-neon-blue" /> 玩家上车区域
-              <span className="text-xs text-gray-500 font-body">({playersWithNoCar.length}人)</span>
-            </h3>
-            {expandPlayers ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
-          </button>
-          {expandPlayers && (
-            <div className="mt-3 space-y-2">
-              {playersWithNoCar.map((p, i) => (
-                <div key={i} className="flex items-center justify-between p-2.5 bg-night-700/40 rounded-xl">
-                  <div className="flex items-center gap-2">
-                    <UserAvatar nickname={p.user.nickname} isCarOwner={p.user.isCarOwner} size="sm" status={p.checkinStatus} />
-                    <span className="text-sm text-gray-200">{p.user.nickname}</span>
-                  </div>
-                  <select
-                    value={p.pickupArea || ''}
-                    onChange={(e) => updatePlayerPickupArea(activity.id, p.user.id, e.target.value)}
-                    className="bg-night-800 text-xs text-neon-gold border border-neon-pink/20 rounded-lg px-2 py-1 focus:outline-none focus:border-neon-pink"
-                  >
-                    <option value="">选择区域</option>
-                    {pickupAreas.map((area) => (
-                      <option key={area} value={area}>{area}</option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {activity.fleetGroups.length === 0 ? (
-          <div className="glass-card p-8 text-center">
-            <Car size={48} className="mx-auto text-gray-600 mb-4" />
-            <p className="text-gray-400 mb-4">还没有生成车队分组</p>
-            <p className="text-xs text-gray-500 mb-4">确认车源并为玩家设置上车区域后自动排车</p>
-            <button
-              onClick={handleGenerate}
-              disabled={activity.carOffers.filter((co) => co.status === 'confirmed').length === 0}
-              className="neon-btn"
-            >
-              按区域生成分组
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="flex bg-night-800 rounded-xl p-1">
+        {fleetGroups.length > 0 && (
+          <div className="mt-4">
+            <div className="flex gap-2 p-1.5 rounded-2xl bg-ink-deep/80 border border-neon-magenta/10">
               <button
                 onClick={() => setActiveTab('outbound')}
-                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-1 ${
-                  activeTab === 'outbound' ? 'bg-neon-gradient text-white' : 'text-gray-400'
+                className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all ${
+                  activeTab === 'outbound'
+                    ? 'bg-neon-magenta text-ink-deep shadow-glow-magenta'
+                    : 'text-neon-lavender hover:text-neon-magenta'
                 }`}
               >
-                <ArrowRight size={14} /> 去程车队
+                去程
+                {fleetGroups.find((g) => g.type === 'outbound') && (
+                  <span className="ml-1.5 opacity-70">
+                    ({fleetGroups.find((g) => g.type === 'outbound')!.cars.length}车)
+                  </span>
+                )}
               </button>
-              <button
-                onClick={() => setActiveTab('return')}
-                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-1 ${
-                  activeTab === 'return' ? 'bg-neon-blue/30 text-neon-blue border border-neon-blue/30' : 'text-gray-400'
-                }`}
-              >
-                <ArrowLeft size={14} /> 返程车队
-              </button>
+              {fleetGroups.find((g) => g.type === 'return') && (
+                <button
+                  onClick={() => setActiveTab('return')}
+                  className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all ${
+                    activeTab === 'return'
+                      ? 'bg-neon-magenta text-ink-deep shadow-glow-magenta'
+                      : 'text-neon-lavender hover:text-neon-magenta'
+                  }`}
+                >
+                  返程
+                  <span className="ml-1.5 opacity-70">
+                    ({fleetGroups.find((g) => g.type === 'return')!.cars.length}车)
+                  </span>
+                </button>
+              )}
             </div>
+          </div>
+        )}
+      </header>
 
-            {currentGroup ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 text-sm text-gray-300 bg-night-800/50 rounded-xl p-3">
-                  <MapPin size={14} className="text-neon-pink shrink-0" />
-                  <span>集合点: {currentGroup.meetingPoint}</span>
-                </div>
-                <div className="flex items-center gap-3 text-sm text-gray-300 bg-night-800/50 rounded-xl p-3">
-                  <Clock size={14} className="text-neon-pink shrink-0" />
-                  <span>出发: {format(new Date(currentGroup.departureTime), 'M月d日 HH:mm', { locale: zhCN })}</span>
-                </div>
-
-                {currentGroup.cars.map((car, i) => {
-                  const carOffer = getCarOffer(car.carOfferId)
-                  const remaining = carOffer ? carOffer.availableSeats - car.passengers.length : 0
-                  const isOverload = remaining < 0
-                  return (
-                    <div key={i} className={`glass-card p-4 ${isOverload ? 'border-red-500/50' : ''}`}>
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 bg-neon-gradient rounded-full flex items-center justify-center text-white text-sm font-bold">
-                            {i + 1}
+      <main className="px-4 pt-6 space-y-5">
+        {pendingCarOffers.length > 0 && currentGroup && (
+          <section className="glass-card rounded-3xl p-5 border-2 border-neon-blue/30 animate-pulse-glow">
+            <div className="flex items-start gap-3">
+              <div className="p-3 rounded-2xl bg-neon-blue/15 text-neon-blue shrink-0">
+                <UserPlus className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-display text-lg text-neon-blue mb-1">待确认车源</h3>
+                <p className="text-xs text-neon-lavender/70 mb-4">
+                  有 {pendingCarOffers.length} 位车主已响应出车，可并入当前车队
+                </p>
+                <div className="space-y-3">
+                  {pendingCarOffers.map((co) => (
+                    <div
+                      key={co.id}
+                      className="p-3 rounded-2xl bg-ink-deep/60 border border-neon-blue/20"
+                    >
+                      <div className="flex items-center gap-3 mb-3">
+                        <img
+                          src={co.driver.avatar}
+                          alt={co.driver.nickname}
+                          className="w-10 h-10 rounded-full object-cover ring-2 ring-neon-blue/40"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-neon-lavender text-sm">
+                            {co.driver.nickname}
                           </div>
-                          <div className="flex items-center gap-2">
-                            <UserAvatar nickname={car.driver.nickname} isCarOwner size="sm" />
-                            <div>
-                              <p className="text-sm text-white font-medium">{car.driver.nickname}</p>
-                              <p className="text-xs text-neon-pink">司机 · {car.driverPickupArea}</p>
-                            </div>
+                          <div className="text-xs text-neon-lavender/60">
+                            📍 {co.pickupArea} · 可坐{co.availableSeats}人
+                            {co.waitAfterGame && ' · 包返程'}
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className={`text-xs font-medium ${remaining > 0 ? 'text-neon-green' : remaining === 0 ? 'text-neon-gold' : 'text-red-400'}`}>
-                            剩 {remaining} 座
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {car.passengers.length}/{carOffer?.availableSeats || 0}
-                          </p>
-                        </div>
                       </div>
-
-                      <div className="flex items-center gap-2 text-xs text-gray-400 bg-night-700/30 rounded-lg p-2 mb-2">
-                        <Car size={12} className="text-neon-pink/60 shrink-0" />
-                        {car.route}
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() =>
+                            confirmCarOfferAndAddToFleet(activity.id, co.id, 'empty')
+                          }
+                          className="flex items-center justify-center gap-1.5 py-2 rounded-xl bg-neon-blue/15 border border-neon-blue/30 text-neon-blue text-xs font-medium hover:bg-neon-blue/25 transition-colors"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> 补空车
+                        </button>
+                        <button
+                          onClick={() =>
+                            confirmCarOfferAndAddToFleet(activity.id, co.id, 'split')
+                          }
+                          className="flex items-center justify-center gap-1.5 py-2 rounded-xl bg-neon-purple/15 border border-neon-purple/30 text-neon-purple text-xs font-medium hover:bg-neon-purple/25 transition-colors"
+                        >
+                          <Scissors className="w-3.5 h-3.5" /> 分担满车
+                        </button>
                       </div>
-
-                      <div className="flex items-center gap-2 text-xs gold-text bg-neon-gold/10 rounded-lg p-2 border border-neon-gold/20 mb-3">
-                        <MapPin size={12} /> 接人顺序: 
-                        {activeTab === 'outbound'
-                          ? car.route.split(' → ').slice(0, -1).join(' → ')
-                          : car.route.split(' → ').slice(1).join(' → ')}
-                      </div>
-
-                      {car.passengers.length > 0 ? (
-                        <div className="space-y-1.5">
-                          {car.passengers.map((p, j) => (
-                            <div
-                              key={j}
-                              className="flex items-center justify-between bg-night-700/50 rounded-lg px-3 py-2 group"
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-neon-gold w-5">{j + 1}</span>
-                                <Users size={10} className="text-neon-blue/60" />
-                                <span className="text-xs text-gray-300">{p.user.nickname}</span>
-                                <span className="text-xs text-neon-gold/70">({p.pickupArea})</span>
-                              </div>
-                              <button
-                                onClick={() => handleMoveClick(p, car.carOfferId)}
-                                className="text-gray-500 hover:text-neon-pink transition-colors opacity-0 group-hover:opacity-100"
-                                title="移动到其他车"
-                              >
-                                <MoveRight size={14} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-500 text-center py-2">暂无乘客</p>
-                      )}
                     </div>
-                  )
-                })}
-
-                <div className="flex gap-3">
-                  <button onClick={handleGenerate} className="ghost-btn flex-1 flex items-center justify-center gap-2">
-                    重新分组
-                  </button>
-                  <button
-                    onClick={() => setShowSharePreview(true)}
-                    className="neon-btn flex-1 flex items-center justify-center gap-2"
-                  >
-                    <Share2 size={16} /> 一键分享
-                  </button>
+                  ))}
                 </div>
               </div>
-            ) : (
-              <div className="glass-card p-8 text-center">
-                <p className="text-gray-500">
-                  {activeTab === 'return' ? '暂无返程车队（无车主愿意等散场）' : '暂无去程车队'}
+            </div>
+          </section>
+        )}
+
+        {currentGroup && (
+          <div className="glass-card rounded-3xl p-5 border border-neon-magenta/15">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="font-display text-xl text-neon-magenta mb-1">
+                  {activeTab === 'outbound' ? '去程' : '返程'}车队
+                </h2>
+                <p className="text-xs text-neon-lavender/70">
+                  {format(new Date(currentGroup.departureTime), 'MM月dd日 HH:mm')} 发车 · {totalPassengers}人 · 共
+                  {currentGroup.cars.length}辆
                 </p>
               </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {showSharePreview && currentGroup && (
-        <div
-          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
-          onClick={() => setShowSharePreview(false)}
-        >
-          <div
-            className="glass-card p-6 w-full max-w-sm animate-slide-up"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="font-display text-xl text-white mb-4">分享车队名单</h3>
-            <div className="bg-night-700/50 rounded-xl p-4 text-sm text-gray-300 whitespace-pre-line max-h-60 overflow-y-auto">
-              {generateShareText()}
-            </div>
-            <div className="flex gap-3 mt-4">
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(generateShareText())
-                }}
-                className="neon-btn flex-1"
-              >
-                复制文字
-              </button>
-              <button onClick={() => setShowSharePreview(false)} className="ghost-btn flex-1">
-                关闭
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    generateFleetGroups(activity.id)
+                    setSaved(true)
+                  }}
+                  className="p-2.5 rounded-xl bg-ink-deep/80 border border-neon-blue/20 text-neon-blue hover:border-neon-blue transition-all"
+                  title="重新生成"
+                >
+                  <RefreshCw className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={handleShare}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-neon-magenta text-ink-deep font-semibold text-sm shadow-glow-magenta hover:brightness-110"
+                >
+                  <Share2 className="w-4 h-4" /> 一键分享
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {moveTarget && currentGroup && (
-        <div
-          className="fixed inset-0 z-50 bg-black/70 flex items-end justify-center sm:items-center"
-          onClick={() => setMoveTarget(null)}
-        >
-          <div
-            className="glass-card p-5 w-full max-w-lg animate-slide-up sm:rounded-2xl rounded-t-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="font-display text-lg text-white mb-1">移动乘客</h3>
-            <p className="text-sm text-gray-400 mb-4">
-              将 <span className="text-neon-pink">{moveTarget.passenger.user.nickname}</span> 移动到哪辆车？
-            </p>
-            <div className="space-y-2">
-              {currentGroup.cars
-                .filter((c) => c.carOfferId !== moveTarget.fromCarOfferId)
-                .map((car, idx) => {
-                  const carOffer = getCarOffer(car.carOfferId)
-                  const remaining = carOffer ? carOffer.availableSeats - car.passengers.length : 0
-                  const canMove = remaining > 0
-                  return (
-                    <button
-                      key={car.carOfferId}
-                      onClick={() => canMove && handleMoveConfirm(car.carOfferId)}
-                      disabled={!canMove}
-                      className={`w-full flex items-center justify-between p-3 rounded-xl transition-all ${
-                        canMove
-                          ? 'bg-night-700/70 hover:bg-night-600/70 text-white'
-                          : 'bg-night-800/50 text-gray-600 cursor-not-allowed'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 bg-neon-gradient rounded-full flex items-center justify-center text-white text-xs font-bold">
-                          {idx + 1}
+        {currentGroup ? (
+          currentGroup.cars.length > 0 ? (
+            <div className="space-y-4">
+              {currentGroup.cars.map((car, carIdx) => {
+                const co = activity.carOffers.find((c) => c.id === car.carOfferId)
+                const capacity = co?.availableSeats || car.passengers.length
+                const overflow = car.passengers.length > capacity
+                const available = capacity - car.passengers.length
+                const seatColor =
+                  available > 1
+                    ? 'text-neon-green'
+                    : available === 0
+                    ? 'text-neon-gold'
+                    : 'text-neon-orange'
+
+                const carBoardingStats = car.passengers.reduce(
+                  (acc, p) => {
+                    const s = p.boardingStatus || 'waiting'
+                    acc[s] = (acc[s] || 0) + 1
+                    return acc
+                  },
+                  {} as Record<string, number>
+                )
+
+                return (
+                  <motion.div
+                    key={car.carOfferId}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: carIdx * 0.08 }}
+                    className={`glass-card rounded-3xl p-5 ${
+                      overflow
+                        ? 'border-2 border-neon-red shadow-[0_0_30px_rgba(239,68,68,0.3)]'
+                        : 'border border-neon-gold/15'
+                    }`}
+                  >
+                    <div className="flex items-start gap-4 mb-4">
+                      <div className="relative shrink-0">
+                        <img
+                          src={car.driver.avatar}
+                          alt={car.driver.nickname}
+                          className="w-14 h-14 rounded-full object-cover ring-2 ring-neon-gold/60"
+                        />
+                        <div className="absolute -bottom-1 -right-1 w-6 h-6 flex items-center justify-center rounded-full bg-neon-gold text-ink-deep">
+                          <Car className="w-3.5 h-3.5" />
                         </div>
-                        <span className="text-sm">{car.driver.nickname} 的车</span>
                       </div>
-                      <span className={`text-xs ${canMove ? 'text-neon-green' : 'text-gray-600'}`}>
-                        剩 {remaining} 座
-                        {!canMove && ' · 满员'}
-                      </span>
-                    </button>
-                  )
-                })}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="font-bold text-neon-gold">
+                              车{carIdx + 1} · {car.driver.nickname}
+                            </div>
+                            <div className="text-xs text-neon-lavender/70 mt-0.5 flex items-center gap-1.5">
+                              <MapPin className="w-3 h-3" />
+                              {car.driverPickupArea} 出发
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className={`text-xs ${seatColor} font-semibold`}>
+                              剩 {available} 座
+                            </div>
+                            <div className="text-sm font-bold text-neon-lavender mt-0.5">
+                              {car.passengers.length}/{capacity}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mb-4 flex flex-wrap gap-2">
+                      {(Object.keys(statusMeta) as BoardingStatusType[]).map((st) => {
+                        if (!carBoardingStats[st]) return null
+                        const meta = statusMeta[st]
+                        return (
+                          <span
+                            key={st}
+                            className={`${meta.bg} ${meta.color} ${meta.border} border px-2.5 py-1 rounded-lg text-xs font-medium`}
+                          >
+                            {meta.label} {carBoardingStats[st]}人
+                          </span>
+                        )
+                      })}
+                    </div>
+
+                    <div className="mb-4 px-3 py-2.5 rounded-xl bg-gradient-to-r from-neon-gold/10 via-neon-magenta/5 to-neon-gold/10 border border-neon-gold/20">
+                      <div className="text-[11px] text-neon-gold/90 font-medium mb-0.5">
+                        📍 接人顺序路线
+                      </div>
+                      <div className="text-sm text-neon-lavender font-mono">{car.route}</div>
+                    </div>
+
+                    <div className="space-y-2">
+                      {car.passengers.map((p, pi) => {
+                        const st: BoardingStatusType = p.boardingStatus || 'waiting'
+                        const meta = statusMeta[st]
+                        const Icon = meta.icon
+                        return (
+                          <div
+                            key={p.user.id}
+                            className={`group/item ${meta.border} border ${meta.bg} rounded-2xl p-3 flex items-center gap-3 transition-all`}
+                          >
+                            <div className="w-7 h-7 shrink-0 flex items-center justify-center rounded-lg bg-ink-deep/70 text-neon-gold font-bold text-sm">
+                              {pi + 1}
+                            </div>
+                            <img
+                              src={p.user.avatar}
+                              alt={p.user.nickname}
+                              className="w-9 h-9 rounded-full object-cover shrink-0"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium text-neon-lavender truncate flex items-center gap-2">
+                                <Icon className={`w-3.5 h-3.5 shrink-0 ${meta.color}`} />
+                                {p.user.nickname}
+                              </div>
+                              {editingUserId === p.user.id ? (
+                                <select
+                                  defaultValue={p.pickupArea}
+                                  onChange={(e) => {
+                                    updatePlayerPickupArea(activity.id, p.user.id, e.target.value)
+                                    setEditingUserId(null)
+                                    generateFleetGroups(activity.id)
+                                  }}
+                                  className="mt-1 text-xs bg-ink-deep border border-neon-magenta/30 rounded-lg px-2 py-0.5 text-neon-lavender"
+                                >
+                                  {pickupAreas.map((a) => (
+                                    <option key={a} value={a}>
+                                      {a}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <div
+                                  className="text-xs text-neon-lavender/60 flex items-center gap-1 cursor-pointer hover:text-neon-magenta"
+                                  onClick={() => setEditingUserId(p.user.id)}
+                                >
+                                  <MapPin className="w-3 h-3" />
+                                  {p.pickupArea}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity">
+                              {(Object.keys(statusMeta) as BoardingStatusType[]).map((t) => {
+                                if (t === st) return null
+                                const tMeta = statusMeta[t]
+                                const TIcon = tMeta.icon
+                                return (
+                                  <button
+                                    key={t}
+                                    onClick={() =>
+                                      handleStatusChange(car.carOfferId, p.user.id, t)
+                                    }
+                                    className={`p-1.5 rounded-lg ${tMeta.bg} ${tMeta.color} hover:brightness-125 transition-all`}
+                                    title={`标记为${tMeta.label}`}
+                                  >
+                                    <TIcon className="w-3.5 h-3.5" />
+                                  </button>
+                                )
+                              })}
+                              <button
+                                onClick={() => {
+                                  setMovingPassenger(p)
+                                  setMovingFromCarId(car.carOfferId)
+                                }}
+                                className="p-1.5 rounded-lg bg-neon-blue/15 text-neon-blue hover:bg-neon-blue/30"
+                                title="挪到别的车"
+                              >
+                                <MoveRight className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+
+                      {car.passengers.length === 0 && (
+                        <div className="text-center py-6 text-neon-lavender/40 text-sm italic">
+                          这辆车暂无乘客分配
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                )
+              })}
             </div>
+          ) : (
+            <div className="glass-card rounded-3xl p-10 text-center border border-dashed border-neon-magenta/30">
+              <Users className="w-16 h-16 mx-auto mb-4 text-neon-magenta/50" />
+              <p className="text-neon-lavender/70 mb-6">该方向暂无分配车辆</p>
+              <button
+                onClick={() => generateFleetGroups(activity.id)}
+                className="px-6 py-3 rounded-xl bg-neon-magenta text-ink-deep font-semibold shadow-glow-magenta"
+              >
+                生成车队分组
+              </button>
+            </div>
+          )
+        ) : (
+          <div className="glass-card rounded-3xl p-10 text-center border border-dashed border-neon-magenta/30">
+            <Users className="w-16 h-16 mx-auto mb-4 text-neon-magenta/50" />
+            <p className="text-neon-lavender/70 mb-6">
+              {fleetGroups.length === 0
+                ? '还未生成车队分组，点击下方按钮按区域智能派车'
+                : '暂无此方向的车队分组'}
+            </p>
             <button
-              onClick={() => setMoveTarget(null)}
-              className="ghost-btn w-full mt-4"
+              onClick={() => generateFleetGroups(activity.id)}
+              className="px-6 py-3 rounded-xl bg-neon-magenta text-ink-deep font-semibold shadow-glow-magenta flex items-center justify-center gap-2 mx-auto"
             >
-              取消
+              <ArrowLeftRight className="w-5 h-5" /> 按区域智能派车
             </button>
           </div>
-        </div>
-      )}
+        )}
+
+        <section className="glass-card rounded-3xl p-5 border border-neon-blue/15">
+          <button
+            onClick={() => setExpandArea(!expandArea)}
+            className="w-full flex items-center justify-between"
+          >
+            <div>
+              <h3 className="font-display text-lg text-neon-blue">玩家上车区域分布</h3>
+              <p className="text-xs text-neon-lavender/70 mt-0.5">
+                共 {areaStats.length} 个区域，点击可手动调整
+              </p>
+            </div>
+            {expandArea ? (
+              <ChevronUp className="w-5 h-5 text-neon-blue" />
+            ) : (
+              <ChevronDown className="w-5 h-5 text-neon-blue" />
+            )}
+          </button>
+          <AnimatePresence>
+            {expandArea && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  {areaStats.map(([area, count]) => (
+                    <div
+                      key={area}
+                      className="px-4 py-3 rounded-2xl bg-ink-deep/60 border border-neon-blue/20 flex items-center justify-between"
+                    >
+                      <span className="text-sm text-neon-lavender">{area}</span>
+                      <span className="text-sm font-semibold text-neon-blue">
+                        {count} 人
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-4 text-xs text-neon-lavender/50">
+                  💡 调整玩家上车区域后，重新生成车队分组可让同区域玩家更集中
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </section>
+      </main>
+
+      <AnimatePresence>
+        {movingPassenger && movingFromCarId && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end"
+            onClick={() => {
+              setMovingPassenger(null)
+              setMovingFromCarId(null)
+            }}
+          >
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full glass-card rounded-t-3xl border-t border-neon-magenta/20 px-5 pt-5 pb-8 max-h-[70vh] overflow-y-auto"
+            >
+              <div className="w-12 h-1.5 bg-neon-lavender/30 rounded-full mx-auto mb-5" />
+              <div className="flex items-start justify-between mb-5">
+                <div className="flex items-center gap-3">
+                  <img
+                    src={movingPassenger.user.avatar}
+                    alt={movingPassenger.user.nickname}
+                    className="w-11 h-11 rounded-full object-cover ring-2 ring-neon-magenta/50"
+                  />
+                  <div>
+                    <h3 className="font-bold text-neon-lavender">移动乘客</h3>
+                    <p className="text-xs text-neon-lavender/60 mt-0.5">
+                      {movingPassenger.user.nickname} · {movingPassenger.pickupArea}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setMovingPassenger(null)
+                    setMovingFromCarId(null)
+                  }}
+                  className="p-2 rounded-xl bg-ink-deep/80 text-neon-lavender/60"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="space-y-2">
+                {currentGroup?.cars
+                  .filter((c) => c.carOfferId !== movingFromCarId)
+                  .map((car) => {
+                    const co = activity.carOffers.find((c) => c.id === car.carOfferId)
+                    const cap = co?.availableSeats || car.passengers.length
+                    const full = car.passengers.length >= cap
+                    return (
+                      <button
+                        key={car.carOfferId}
+                        disabled={full}
+                        onClick={() => handleMove(car.carOfferId)}
+                        className={`w-full text-left p-4 rounded-2xl border transition-all ${
+                          full
+                            ? 'bg-neon-red/5 border-neon-red/20 opacity-50 cursor-not-allowed'
+                            : 'bg-ink-deep/60 border-neon-magenta/20 hover:bg-neon-magenta/10 hover:border-neon-magenta/40'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={car.driver.avatar}
+                              alt={car.driver.nickname}
+                              className="w-9 h-9 rounded-full object-cover"
+                            />
+                            <div>
+                              <div className="text-sm font-semibold text-neon-lavender">
+                                {car.driver.nickname} 的车
+                              </div>
+                              <div className="text-xs text-neon-lavender/60 mt-0.5">
+                                📍 {car.driverPickupArea} 出发
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            {full ? (
+                              <span className="inline-block px-2.5 py-1 rounded-lg bg-neon-red/15 text-neon-red text-xs font-medium">
+                                满员
+                              </span>
+                            ) : (
+                              <div className="text-sm font-bold text-neon-green">
+                                可坐 {cap - car.passengers.length} 人
+                              </div>
+                            )}
+                            <div className="text-[11px] text-neon-lavender/50 mt-0.5">
+                              {car.passengers.length}/{cap}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    )
+                  })}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

@@ -24,9 +24,12 @@ export interface CarOffer {
   createdAt: string
 }
 
+export type BoardingStatus = 'waiting' | 'boarded' | 'missed' | 'no_show'
+
 export interface FleetPassenger {
   user: User
   pickupArea: string
+  boardingStatus?: BoardingStatus
 }
 
 export interface FleetCar {
@@ -67,6 +70,7 @@ export interface Activity {
   storeAddress: string
   startTime: string
   playerCount: number
+  maxPlayers: number
   currentPlayers: number
   organizer: User
   carRecruitment: CarRecruitment
