@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: "Noto Sans SC", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #0D0D1A;
+  color: #E8E8F0;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  background-color: #0D0D1A;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1A1A2E;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2A3A5C;
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #E94560;
+}
+
+input, textarea, select {
+  font-family: "Noto Sans SC", sans-serif;
+}
+
+@layer components {
+  .glass-card {
+    background: rgba(26, 26, 46, 0.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(233, 69, 96, 0.15);
+    border-radius: 16px;
+  }
+
+  .neon-border {
+    border: 1px solid rgba(233, 69, 96, 0.3);
+    box-shadow: 0 0 12px rgba(233, 69, 96, 0.1);
+  }
+
+  .neon-text {
+    color: #E94560;
+    text-shadow: 0 0 10px rgba(233, 69, 96, 0.5);
+  }
+
+  .gold-text {
+    color: #F0C27F;
+    text-shadow: 0 0 8px rgba(240, 194, 127, 0.4);
+  }
+
+  .neon-btn {
+    background: linear-gradient(135deg, #E94560, #FF6B81);
+    color: white;
+    border: none;
+    border-radius: 9999px;
+    padding: 12px 32px;
+    font-weight: 700;
+    font-size: 16px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 16px rgba(233, 69, 96, 0.3);
+  }
+
+  .neon-btn:hover {
+    box-shadow: 0 6px 24px rgba(233, 69, 96, 0.5);
+    transform: translateY(-1px);
+  }
+
+  .neon-btn:active {
+    transform: translateY(0);
+  }
+
+  .ghost-btn {
+    background: transparent;
+    color: #E94560;
+    border: 1px solid rgba(233, 69, 96, 0.5);
+    border-radius: 9999px;
+    padding: 10px 24px;
+    font-weight: 500;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+
+  .ghost-btn:hover {
+    background: rgba(233, 69, 96, 0.1);
+    border-color: #E94560;
+  }
+
+  .dark-input {
+    background: rgba(22, 33, 62, 0.8);
+    border: 1px solid rgba(233, 69, 96, 0.2);
+    border-radius: 12px;
+    color: #E8E8F0;
+    padding: 12px 16px;
+    font-size: 14px;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.3s ease;
+  }
+
+  .dark-input:focus {
+    border-color: #E94560;
+    box-shadow: 0 0 8px rgba(233, 69, 96, 0.2);
+  }
+
+  .dark-input::placeholder {
+    color: rgba(232, 232, 240, 0.35);
+  }
+}
