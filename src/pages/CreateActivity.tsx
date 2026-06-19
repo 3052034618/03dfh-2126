@@ -91,6 +91,7 @@ export default function CreateActivity() {
       players: [{ user: currentUser, checkinStatus: 'not_arrived' as const }],
       carOffers: [],
       fleetGroups: [],
+      reminderBatches: [],
       status: 'recruiting' as const,
       deadline: new Date(new Date(startTime).getTime() - 4 * 60 * 60 * 1000).toISOString(),
       isFriendsOnly,

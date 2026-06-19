@@ -3,6 +3,7 @@ export interface User {
   nickname: string
   avatar: string
   isCarOwner: boolean
+  phone?: string
 }
 
 export interface CarRecruitment {
@@ -32,12 +33,18 @@ export interface FleetPassenger {
   boardingStatus?: BoardingStatus
 }
 
+export type CarExecutionStatus = 'waiting' | 'boarding' | 'in_transit' | 'arrived'
+
 export interface FleetCar {
   carOfferId: string
   driver: User
   driverPickupArea: string
   passengers: FleetPassenger[]
   route: string
+  executionStatus?: CarExecutionStatus
+  startedBoardingAt?: string
+  departedAt?: string
+  arrivedAt?: string
 }
 
 export interface FleetGroup {
@@ -52,6 +59,24 @@ export interface FleetGroup {
 export type CheckinStatus = 'not_arrived' | 'arrived' | 'late' | 'ride_share'
 
 export type ReminderTarget = 'not_arrived' | 'late' | 'ride_share' | 'all'
+
+export interface ReminderReceipt {
+  userId: string
+  read: boolean
+  readAt?: string
+  replyEta?: string
+  repliedAt?: string
+}
+
+export interface ReminderBatch {
+  id: string
+  activityId: string
+  target: ReminderTarget
+  notificationType: 'reminder_not_arrived' | 'reminder_late' | 'reminder_ride_share'
+  sentAt: string
+  sentBy: User
+  receipts: ReminderReceipt[]
+}
 
 export interface Player {
   user: User
@@ -77,6 +102,7 @@ export interface Activity {
   players: Player[]
   carOffers: CarOffer[]
   fleetGroups: FleetGroup[]
+  reminderBatches: ReminderBatch[]
   status: 'recruiting' | 'confirmed' | 'in_progress' | 'completed'
   deadline: string
   isFriendsOnly: boolean
@@ -94,6 +120,8 @@ export type NotificationType =
   | 'reminder_not_arrived'
   | 'reminder_late'
   | 'reminder_ride_share'
+  | 'car_execution'
+  | 'contact_passenger'
 
 export interface AppNotification {
   id: string
@@ -102,4 +130,5 @@ export interface AppNotification {
   content: string
   user: User
   timestamp: string
+  metadata?: Record<string, unknown>
 }

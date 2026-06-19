@@ -10,6 +10,9 @@ import type {
   FleetCar,
   ReminderTarget,
   BoardingStatus,
+  CarExecutionStatus,
+  ReminderBatch,
+  ReminderReceipt,
 } from '@/types'
 import { mockActivities, mockNotifications, mockUsers, areaAdjacency } from '@/data/mock'
 
@@ -57,10 +60,11 @@ const rebuildFleetCarRoute = (car: FleetCar, type: 'outbound' | 'return', storeS
   return { ...car, passengers: passengersOrdered, route }
 }
 
-const rebuildFleetGroupRoutes = (group: FleetGroup, storeShort: string): FleetGroup => ({
-  ...group,
-  cars: group.cars.map((car) => rebuildFleetCarRoute(car, group.type, storeShort)),
-})
+const reminderTargetToNotif = (t: ReminderTarget): ReminderBatch['notificationType'] => {
+  if (t === 'late') return 'reminder_late'
+  if (t === 'ride_share') return 'reminder_ride_share'
+  return 'reminder_not_arrived'
+}
 
 interface AppState {
   activities: Activity[]
@@ -86,6 +90,19 @@ interface AppState {
     passengerUserId: string,
     status: BoardingStatus
   ) => void
+  setCarExecutionStatus: (
+    activityId: string,
+    groupType: 'outbound' | 'return',
+    carOfferId: string,
+    status: CarExecutionStatus
+  ) => void
+  contactPassenger: (
+    activityId: string,
+    driverUserId: string,
+    passengerUserId: string
+  ) => void
+  markReminderRead: (activityId: string, batchId: string, userId: string) => void
+  replyReminderEta: (activityId: string, batchId: string, userId: string, eta: string) => void
   updateFleetGroup: (activityId: string, group: FleetGroup) => void
   checkin: (activityId: string, userId: string) => void
   setPlayerStatus: (activityId: string, userId: string, status: CheckinStatus) => void
@@ -93,6 +110,8 @@ interface AppState {
   updatePlayerPickupArea: (activityId: string, userId: string, area: string) => void
   addNotification: (notification: AppNotification) => void
   getActivity: (id: string) => Activity | undefined
+  getDriverCars: (activityId: string, driverUserId: string) => { group: FleetGroup; car: FleetCar }[]
+  buildDriverShareText: (activity: Activity, group: FleetGroup, car: FleetCar, carIndex: number) => string
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -190,6 +209,7 @@ export const useStore = create<AppState>((set, get) => ({
       driverPickupArea: offer.pickupArea,
       passengers: [],
       route: `${offer.pickupArea} → ${storeShort}`,
+      executionStatus: 'waiting',
     }
 
     const rebuiltCarOut = rebuildFleetCarRoute(newCar, 'outbound', storeShort)
@@ -205,16 +225,21 @@ export const useStore = create<AppState>((set, get) => ({
         let newFleetGroups = a.fleetGroups
 
         if (mode === 'empty') {
-          newFleetGroups = a.fleetGroups.map((fg) =>
-            fg.type === 'outbound'
-              ? { ...fg, cars: [...fg.cars, rebuiltCarOut] }
-              : fg.type === 'return' && offer.waitAfterGame
-              ? { ...fg, cars: [...fg.cars, rebuiltCarRet] }
-              : fg
-          )
+          newFleetGroups = a.fleetGroups.map((fg) => {
+            if (fg.cars.some((c) => c.carOfferId === offerId)) return fg
+            if (fg.type === 'outbound') {
+              return { ...fg, cars: [...fg.cars, rebuiltCarOut] }
+            }
+            if (fg.type === 'return' && offer.waitAfterGame) {
+              return { ...fg, cars: [...fg.cars, rebuiltCarRet] }
+            }
+            return fg
+          })
         } else if (mode === 'split') {
           newFleetGroups = a.fleetGroups.map((fg) => {
             if (fg.cars.length === 0) return fg
+            if (fg.cars.some((c) => c.carOfferId === offerId)) return fg
+            if (fg.type === 'return' && !offer.waitAfterGame) return fg
 
             const sortedCars = [...fg.cars].sort(
               (a, b) => b.passengers.length - a.passengers.length
@@ -240,12 +265,10 @@ export const useStore = create<AppState>((set, get) => ({
               fg.type,
               storeShort
             )
-            if (fg.type === 'return' && !offer.waitAfterGame) return fg
+            const unchangedCars = fg.cars.filter((c) => c.carOfferId !== fullest.carOfferId)
             return {
               ...fg,
-              cars: fg.cars.map((c) =>
-                c.carOfferId === fullest.carOfferId ? rebuiltFullest : c
-              ).concat(rebuiltNew),
+              cars: [...unchangedCars, rebuiltFullest, rebuiltNew],
             }
           })
         }
@@ -377,6 +400,7 @@ export const useStore = create<AppState>((set, get) => ({
         driverPickupArea: cw.car.pickupArea,
         passengers: cw.passengers,
         route: '',
+        executionStatus: 'waiting',
       }
       return rebuildFleetCarRoute(base, 'outbound', storeShort)
     })
@@ -390,6 +414,7 @@ export const useStore = create<AppState>((set, get) => ({
           driverPickupArea: cw.car.pickupArea,
           passengers: cw.passengers,
           route: '',
+          executionStatus: 'waiting',
         }
         return rebuildFleetCarRoute(base, 'return', storeShort)
       })
@@ -534,6 +559,126 @@ export const useStore = create<AppState>((set, get) => ({
       ],
     })),
 
+  setCarExecutionStatus: (activityId, groupType, carOfferId, status) =>
+    set((state) => {
+      const now = new Date().toISOString()
+      return {
+        activities: state.activities.map((a) =>
+          a.id !== activityId
+            ? a
+            : {
+                ...a,
+                fleetGroups: a.fleetGroups.map((fg) =>
+                  fg.type !== groupType
+                    ? fg
+                    : {
+                        ...fg,
+                        cars: fg.cars.map((c) => {
+                          if (c.carOfferId !== carOfferId) return c
+                          const extras: Partial<FleetCar> = {}
+                          if (status === 'boarding') extras.startedBoardingAt = now
+                          if (status === 'in_transit') extras.departedAt = now
+                          if (status === 'arrived') extras.arrivedAt = now
+                          return { ...c, executionStatus: status, ...extras }
+                        }),
+                      }
+                ),
+              }
+        ),
+        notifications: [
+          {
+            id: `n_${Date.now()}`,
+            activityId,
+            type: 'car_execution',
+            content:
+              status === 'waiting'
+                ? '车辆重置为待发车状态'
+                : status === 'boarding'
+                ? '🚐 车辆开始接人'
+                : status === 'in_transit'
+                ? '🚗 车辆已出发，前往剧本店'
+                : '✅ 车辆已到达剧本店',
+            user: state.currentUser,
+            timestamp: now,
+          },
+          ...state.notifications,
+        ],
+      }
+    }),
+
+  contactPassenger: (activityId, driverUserId, passengerUserId) => {
+    const state = get()
+    const driver = mockUsers.find((u) => u.id === driverUserId) || state.currentUser
+    const passenger = mockUsers.find((u) => u.id === passengerUserId)
+    if (!passenger) return
+    set((state) => ({
+      notifications: [
+        {
+          id: `n_${Date.now()}`,
+          activityId,
+          type: 'contact_passenger',
+          content: `${driver.nickname} 正在联系乘客 ${passenger.nickname}`,
+          user: driver,
+          timestamp: new Date().toISOString(),
+          metadata: { passengerUserId },
+        },
+        ...state.notifications,
+      ],
+    }))
+  },
+
+  markReminderRead: (activityId, batchId, userId) =>
+    set((state) => ({
+      activities: state.activities.map((a) =>
+        a.id !== activityId
+          ? a
+          : {
+              ...a,
+              reminderBatches: a.reminderBatches.map((b) =>
+                b.id !== batchId
+                  ? b
+                  : {
+                      ...b,
+                      receipts: b.receipts.map((r) =>
+                        r.userId === userId
+                          ? { ...r, read: true, readAt: new Date().toISOString() }
+                          : r
+                      ),
+                    }
+              ),
+            }
+      ),
+    })),
+
+  replyReminderEta: (activityId, batchId, userId, eta) =>
+    set((state) => ({
+      activities: state.activities.map((a) =>
+        a.id !== activityId
+          ? a
+          : {
+              ...a,
+              reminderBatches: a.reminderBatches.map((b) =>
+                b.id !== batchId
+                  ? b
+                  : {
+                      ...b,
+                      receipts: b.receipts.map((r) =>
+                        r.userId === userId
+                          ? {
+                              ...r,
+                              read: true,
+                              readAt: r.readAt || new Date().toISOString(),
+                              replyEta: eta,
+                              repliedAt: new Date().toISOString(),
+                            }
+                          : r
+                      ),
+                    }
+              ),
+            }
+      ),
+    })),
+
   updateFleetGroup: (activityId, group) =>
     set((state) => ({
       activities: state.activities.map((a) =>
@@ -632,53 +777,73 @@ export const useStore = create<AppState>((set, get) => ({
     if (!activity) return 0
 
     let targetPlayers: Player[] = []
-    let notifType: AppNotification['type']
     let contentTemplate: string
     let targetLabel: string
 
     if (target === 'not_arrived') {
       targetPlayers = activity.players.filter((p) => p.checkinStatus === 'not_arrived')
-      notifType = 'reminder_not_arrived'
       contentTemplate = '局头提醒：发车时间快到了，请尽快到集合点'
       targetLabel = '未到'
     } else if (target === 'late') {
       targetPlayers = activity.players.filter((p) => p.checkinStatus === 'late')
-      notifType = 'reminder_late'
       contentTemplate = '局头提醒：你已迟到，请尽快赶到集合点'
       targetLabel = '迟到'
     } else if (target === 'ride_share') {
       targetPlayers = activity.players.filter((p) => p.checkinStatus === 'ride_share')
-      notifType = 'reminder_ride_share'
       contentTemplate = '局头提醒：网约车请按时出发，别迟到了'
       targetLabel = '网约车'
     } else {
       targetPlayers = activity.players.filter((p) => p.checkinStatus !== 'arrived')
-      notifType = 'reminder_not_arrived'
       contentTemplate = '局头提醒：发车时间快到了'
       targetLabel = '全员'
     }
 
     if (targetPlayers.length === 0) return 0
 
+    const notificationType = reminderTargetToNotif(target)
+    const batchId = `rb_${Date.now()}`
+    const now = new Date().toISOString()
+    const receipts: ReminderReceipt[] = targetPlayers.map((p) => ({
+      userId: p.user.id,
+      read: false,
+    }))
+
+    const newBatch: ReminderBatch = {
+      id: batchId,
+      activityId,
+      target,
+      notificationType,
+      sentAt: now,
+      sentBy: currentUser,
+      receipts,
+    }
+
     const newNotifs: AppNotification[] = targetPlayers.map((p, i) => ({
       id: `n_r_${Date.now()}_${i}`,
       activityId,
-      type: notifType,
+      type: notificationType,
       content: contentTemplate,
       user: p.user,
-      timestamp: new Date().toISOString(),
+      timestamp: now,
+      metadata: { batchId },
     }))
 
     const summaryNotif: AppNotification = {
       id: `n_r_summary_${Date.now()}`,
       activityId,
-      type: 'reminder_not_arrived',
+      type: notificationType,
       content: `📣 局头向 ${targetPlayers.length} 位${targetLabel}玩家发送了提醒`,
       user: currentUser,
-      timestamp: new Date().toISOString(),
+      timestamp: now,
+      metadata: { batchId, isSummary: true },
     }
 
     set((state) => ({
+      activities: state.activities.map((a) =>
+        a.id === activityId
+          ? { ...a, reminderBatches: [newBatch, ...a.reminderBatches] }
+          : a
+      ),
       notifications: [summaryNotif, ...newNotifs, ...state.notifications],
     }))
 
@@ -705,4 +870,42 @@ export const useStore = create<AppState>((set, get) => ({
     })),
 
   getActivity: (id) => get().activities.find((a) => a.id === id),
+
+  getDriverCars: (activityId, driverUserId) => {
+    const activity = get().activities.find((a) => a.id === activityId)
+    if (!activity) return []
+    const result: { group: FleetGroup; car: FleetCar }[] = []
+    for (const g of activity.fleetGroups) {
+      for (const c of g.cars) {
+        if (c.driver.id === driverUserId) result.push({ group: g, car: c })
+      }
+    }
+    return result
+  },
+
+  buildDriverShareText: (activity, group, car, carIndex) => {
+    const typeLabel = group.type === 'outbound' ? '去程' : '返程'
+    const time = group.departureTime ? new Date(group.departureTime) : null
+    const timeStr = time
+      ? `${time.getMonth() + 1}月${time.getDate()}日 ${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}`
+      : ''
+    const lines = [
+      `🎭 ${activity.scriptName} · ${typeLabel}车${carIndex + 1}`,
+      `👤 司机：${car.driver.nickname}${car.driver.phone ? `（${car.driver.phone}）` : ''}`,
+      `⏰ 集合时间：${timeStr}`,
+      `📍 接人路线：${car.route}`,
+      `🚩 集合点：${group.meetingPoint}`,
+      '',
+      `📋 乘客名单（按接人顺序）：`,
+      ...car.passengers.map((p, pi) => {
+        const st = p.boardingStatus || 'waiting'
+        const mark =
+          st === 'boarded' ? '✓' : st === 'missed' ? '⚠' : st === 'no_show' ? '✗' : '◷'
+        return `  ${pi + 1}. ${mark} ${p.user.nickname}（${p.pickupArea}）${p.user.phone ? ` · ${p.user.phone}` : ''}`
+      }),
+      '',
+      `— 剧本杀包场拼车助手 —`,
+    ]
+    return lines.join('\n')
+  },
 }))

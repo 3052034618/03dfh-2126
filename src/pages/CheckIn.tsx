@@ -10,15 +10,21 @@ import {
   Bell,
   MapPin,
   ChevronDown,
+  ChevronUp,
   UserCheck,
   RefreshCw,
   Megaphone,
   CarFront,
+  Eye,
+  EyeOff,
+  MessageCircle,
+  X,
+  CheckCircle2,
 } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useStore } from '@/store/useStore'
-import type { CheckinStatus, NotificationType } from '@/types'
+import type { CheckinStatus, NotificationType, ReminderBatch, ReminderTarget } from '@/types'
 
 const statusMeta: Record<
   CheckinStatus,
@@ -51,37 +57,50 @@ const statusMeta: Record<
   not_arrived: {
     label: '未到',
     icon: Users,
-    color: 'text-neon-lavender/70',
-    bg: 'bg-neon-lavender/5',
-    ring: 'ring-neon-lavender/40',
-    border: 'border-neon-lavender/20',
+    color: 'text-neon-magenta',
+    bg: 'bg-neon-magenta/5',
+    ring: 'ring-neon-magenta/40',
+    border: 'border-neon-magenta/20',
   },
 }
 
 const isReminderType = (t: NotificationType) =>
   t === 'reminder_not_arrived' || t === 'reminder_late' || t === 'reminder_ride_share'
 
-const reminderMeta: Record<string, { label: string; icon: typeof Bell; bg: string; border: string; color: string }> = {
+const targetToNotifType: Record<ReminderTarget, 'reminder_not_arrived' | 'reminder_late' | 'reminder_ride_share'> = {
+  not_arrived: 'reminder_not_arrived',
+  late: 'reminder_late',
+  ride_share: 'reminder_ride_share',
+  all: 'reminder_not_arrived',
+}
+
+const reminderMeta: Record<string, { label: string; short: string; icon: typeof Bell; bg: string; border: string; color: string; gradient: string }> = {
   reminder_not_arrived: {
     label: '🔔 未到提醒',
+    short: '未到提醒',
     icon: Bell,
-    bg: 'from-neon-magenta/20 via-neon-magenta/10 to-transparent',
+    bg: 'bg-neon-magenta/15',
     border: 'border-neon-magenta/40',
     color: 'text-neon-magenta',
+    gradient: 'from-neon-magenta/25 via-neon-magenta/10 to-transparent',
   },
   reminder_late: {
     label: '📣 迟到催促',
+    short: '迟到催促',
     icon: Megaphone,
-    bg: 'from-neon-orange/20 via-neon-orange/10 to-transparent',
+    bg: 'bg-neon-orange/15',
     border: 'border-neon-orange/40',
     color: 'text-neon-orange',
+    gradient: 'from-neon-orange/25 via-neon-orange/10 to-transparent',
   },
   reminder_ride_share: {
     label: '🚗 网约车提醒',
+    short: '网约车提醒',
     icon: CarFront,
-    bg: 'from-neon-blue/20 via-neon-blue/10 to-transparent',
+    bg: 'bg-neon-blue/15',
     border: 'border-neon-blue/40',
     color: 'text-neon-blue',
+    gradient: 'from-neon-blue/25 via-neon-blue/10 to-transparent',
   },
 }
 
@@ -90,10 +109,12 @@ const getReminderMeta = (type: NotificationType) => {
     return (
       reminderMeta[type] || {
         label: '🔔 提醒消息',
+        short: '提醒',
         icon: Bell,
-        bg: 'from-neon-magenta/20 via-neon-magenta/10 to-transparent',
+        bg: 'bg-neon-magenta/15',
         border: 'border-neon-magenta/40',
         color: 'text-neon-magenta',
+        gradient: 'from-neon-magenta/25 via-neon-magenta/10 to-transparent',
       }
     )
   }
@@ -102,17 +123,25 @@ const getReminderMeta = (type: NotificationType) => {
 
 export default function CheckIn() {
   const { id } = useParams<{ id: string }>()
-  const { activity, notifications, setPlayerStatus, sendReminder } = useStore((s) => {
+  const { activity, notifications, setPlayerStatus, sendReminder, markReminderRead, replyReminderEta, currentUser } = useStore((s) => {
     const a = s.activities.find((act) => act.id === id)
     return {
       activity: a,
       notifications: s.notifications.filter((n) => n.activityId === id),
       setPlayerStatus: s.setPlayerStatus,
       sendReminder: s.sendReminder,
+      markReminderRead: s.markReminderRead,
+      replyReminderEta: s.replyReminderEta,
+      currentUser: s.currentUser,
     }
   })
 
   const [activeFilter, setActiveFilter] = useState<'all' | CheckinStatus>('all')
+  const [batchFilter, setBatchFilter] = useState<'all' | 'reminder_not_arrived' | 'reminder_late' | 'reminder_ride_share'>('all')
+  const [expandedBatch, setExpandedBatch] = useState<string | null>(null)
+  const [replyingBatch, setReplyingBatch] = useState<string | null>(null)
+  const [replyingUserId, setReplyingUserId] = useState<string | null>(null)
+  const [etaText, setEtaText] = useState('')
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
 
   const showToast = (type: 'success' | 'error', msg: string) => {
@@ -139,6 +168,35 @@ export default function CheckIn() {
     if (activeFilter === 'all') return activity.players
     return activity.players.filter((p) => p.checkinStatus === activeFilter)
   }, [activity, activeFilter])
+
+  const reminderBatches = useMemo(() => {
+    if (!activity) return [] as ReminderBatch[]
+    if (batchFilter === 'all') return activity.reminderBatches
+    return activity.reminderBatches.filter((b) => b.notificationType === batchFilter)
+  }, [activity, batchFilter])
+
+  const batchStats = useMemo(() => {
+    const base = { total: 0, read: 0, replied: 0 }
+    if (!activity) return base
+    for (const b of activity.reminderBatches) {
+      for (const r of b.receipts) {
+        base.total += 1
+        if (r.read) base.read += 1
+        if (r.replyEta) base.replied += 1
+      }
+    }
+    return base
+  }, [activity])
+
+  const userById = useMemo(() => {
+    const m = new Map<string, { nickname: string; avatar: string }>()
+    if (activity) {
+      for (const p of activity.players) {
+        m.set(p.user.id, { nickname: p.user.nickname, avatar: p.user.avatar })
+      }
+    }
+    return m
+  }, [activity])
 
   if (!activity) {
     return (
@@ -180,6 +238,18 @@ export default function CheckIn() {
       color: 'text-neon-blue',
     },
   ]
+
+  const handleReply = (batchId: string, userId: string) => {
+    if (!etaText.trim()) {
+      showToast('error', '请输入预计到达时间')
+      return
+    }
+    replyReminderEta(activity.id, batchId, userId, etaText.trim())
+    showToast('success', '已回复预计到达时间')
+    setReplyingBatch(null)
+    setReplyingUserId(null)
+    setEtaText('')
+  }
 
   return (
     <div className="min-h-screen bg-ink-night pb-24">
@@ -305,9 +375,227 @@ export default function CheckIn() {
           <div className="mt-4 px-3 py-2 rounded-xl bg-ink-deep/60 border border-neon-lavender/10 flex items-start gap-2">
             <Bell className="w-4 h-4 text-neon-gold shrink-0 mt-0.5" />
             <p className="text-[11px] text-neon-lavender/60 leading-relaxed">
-              玩家会收到对应提醒推送，下方时间线会自动记录每一条提醒消息，并使用粉/橙/蓝霓虹色明显区分于普通状态变更
+              玩家会收到对应提醒推送，下方时间线会自动记录每一条提醒消息，回执流可查看已读和预计到达时间回复
             </p>
           </div>
+        </section>
+
+        <section className="glass-card rounded-3xl p-5 border border-neon-gold/20">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-neon-gold/15 text-neon-gold">
+                <MessageCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="font-display text-lg text-neon-gold">提醒回执流</h2>
+                <p className="text-[11px] text-neon-lavender/60 mt-0.5">
+                  已发 {batchStats.total} 条 · 已读 {batchStats.read} · 已回复ETA {batchStats.replied}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-2 p-1 rounded-2xl bg-ink-deep/60 border border-neon-lavender/10 mb-4 overflow-x-auto">
+            {(['all', 'reminder_not_arrived', 'reminder_late', 'reminder_ride_share'] as const).map((k) => {
+              const isAll = k === 'all'
+              const rm = isAll ? null : reminderMeta[k]
+              const label = isAll ? '全部' : rm?.short || k
+              const active = batchFilter === k
+              return (
+                <button
+                  key={k}
+                  onClick={() => setBatchFilter(k)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all ${
+                    active
+                      ? isAll
+                        ? 'bg-neon-lavender/20 text-neon-lavender border border-neon-lavender/30'
+                        : `${rm?.bg} ${rm?.color} border ${rm?.border}`
+                      : 'text-neon-lavender/60 hover:text-neon-lavender border border-transparent'
+                  }`}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+
+          {reminderBatches.length === 0 ? (
+            <div className="text-center py-8 text-neon-lavender/40 text-sm">
+              <Bell className="w-10 h-10 mx-auto mb-2 opacity-40" />
+              还没有发送过提醒
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {reminderBatches.map((batch) => {
+                const rm = getReminderMeta(batch.notificationType)
+                if (!rm) return null
+                const RIcon = rm.icon
+                const readCount = batch.receipts.filter((r) => r.read).length
+                const replyCount = batch.receipts.filter((r) => r.replyEta).length
+                const expanded = expandedBatch === batch.id
+                return (
+                  <div
+                    key={batch.id}
+                    className={`rounded-2xl overflow-hidden border-2 ${rm.border}`}
+                  >
+                    <button
+                      onClick={() => setExpandedBatch(expanded ? null : batch.id)}
+                      className={`w-full p-3.5 flex items-center justify-between gap-3 bg-gradient-to-br ${rm.gradient}`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className={`p-2 rounded-xl ${rm.bg} ${rm.color} shrink-0`}>
+                          <RIcon className="w-4 h-4" />
+                        </div>
+                        <div className="min-w-0 flex-1 text-left">
+                          <div className={`text-sm font-semibold ${rm.color}`}>
+                            {rm.label}
+                          </div>
+                          <div className="text-[11px] text-neon-lavender/60 mt-0.5 flex items-center gap-2 flex-wrap">
+                            <span className="flex items-center gap-1">
+                              <Users className="w-3 h-3" />{batch.receipts.length}人
+                            </span>
+                            <span className="flex items-center gap-1 text-neon-green">
+                              <Eye className="w-3 h-3" />{readCount}已读
+                            </span>
+                            <span className="flex items-center gap-1 text-neon-gold">
+                              <MessageCircle className="w-3 h-3" />{replyCount}回复
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {formatDistanceToNow(new Date(batch.sentAt), { addSuffix: true })}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      {expanded ? (
+                        <ChevronUp className={`w-4 h-4 shrink-0 ${rm.color}`} />
+                      ) : (
+                        <ChevronDown className={`w-4 h-4 shrink-0 ${rm.color}`} />
+                      )}
+                    </button>
+
+                    <AnimatePresence>
+                      {expanded && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden bg-ink-deep/40"
+                        >
+                          <div className="p-3 space-y-2">
+                            {batch.receipts.map((r) => {
+                              const u = userById.get(r.userId)
+                              if (!u) return null
+                              const isReplyingThis = replyingBatch === batch.id && replyingUserId === r.userId
+                              return (
+                                <div
+                                  key={r.userId}
+                                  className={`p-2.5 rounded-xl border flex items-center gap-3 ${
+                                    r.replyEta
+                                      ? 'bg-neon-gold/8 border-neon-gold/25'
+                                      : r.read
+                                      ? 'bg-neon-green/8 border-neon-green/25'
+                                      : 'bg-neon-magenta/5 border-neon-magenta/20'
+                                  }`}
+                                >
+                                  <img src={u.avatar} alt={u.nickname} className="w-9 h-9 rounded-full object-cover shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-medium text-neon-lavender flex items-center gap-2">
+                                      {u.nickname}
+                                      {r.read ? (
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-neon-green/15 text-neon-green text-[10px] border border-neon-green/30">
+                                          <Eye className="w-3 h-3" />已读
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-neon-magenta/15 text-neon-magenta text-[10px] border border-neon-magenta/30">
+                                          <EyeOff className="w-3 h-3" />未读
+                                        </span>
+                                      )}
+                                    </div>
+                                    {r.replyEta ? (
+                                      <div className="text-[11px] text-neon-gold mt-0.5 flex items-center gap-1">
+                                        <Clock className="w-3 h-3" />
+                                        预计：{r.replyEta}
+                                        {r.repliedAt && (
+                                          <span className="text-neon-lavender/40 ml-1">
+                                            ({formatDistanceToNow(new Date(r.repliedAt), { addSuffix: true })})
+                                          </span>
+                                        )}
+                                      </div>
+                                    ) : r.read ? (
+                                      <div className="text-[11px] text-neon-lavender/50 mt-0.5">
+                                        已读但未回复到达时间
+                                      </div>
+                                    ) : (
+                                      <div className="text-[11px] text-neon-lavender/50 mt-0.5">
+                                        尚未查看提醒
+                                      </div>
+                                    )}
+
+                                    {isReplyingThis ? (
+                                      <div className="mt-2 flex items-center gap-2">
+                                        <input
+                                          autoFocus
+                                          value={etaText}
+                                          onChange={(e) => setEtaText(e.target.value)}
+                                          placeholder="例如：10分钟后 / 19:30"
+                                          className="flex-1 text-xs px-3 py-1.5 rounded-lg bg-ink-deep border border-neon-gold/30 text-neon-lavender placeholder:text-neon-lavender/40 focus:outline-none focus:border-neon-gold"
+                                        />
+                                        <button
+                                          onClick={() => handleReply(batch.id, r.userId)}
+                                          className="px-3 py-1.5 rounded-lg bg-neon-gold text-ink-deep text-xs font-semibold hover:brightness-110"
+                                        >
+                                          回复
+                                        </button>
+                                        <button
+                                          onClick={() => { setReplyingBatch(null); setReplyingUserId(null); setEtaText('') }}
+                                          className="p-1.5 rounded-lg bg-ink-deep border border-neon-lavender/20 text-neon-lavender/60 hover:text-neon-lavender"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </div>
+
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    {!r.read && (
+                                      <button
+                                        onClick={() => {
+                                          markReminderRead(activity.id, batch.id, r.userId)
+                                          showToast('success', '已标记为已读')
+                                        }}
+                                        className="p-1.5 rounded-lg bg-neon-green/15 text-neon-green border border-neon-green/30 hover:bg-neon-green/25"
+                                        title="标记已读"
+                                      >
+                                        <CheckCircle2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                    {!r.replyEta && !isReplyingThis && (
+                                      <button
+                                        onClick={() => {
+                                          setReplyingBatch(batch.id)
+                                          setReplyingUserId(r.userId)
+                                          setEtaText('')
+                                        }}
+                                        className="p-1.5 rounded-lg bg-neon-gold/15 text-neon-gold border border-neon-gold/30 hover:bg-neon-gold/25"
+                                        title="回复ETA"
+                                      >
+                                        <MessageCircle className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </section>
 
         <section>
@@ -334,6 +622,9 @@ export default function CheckIn() {
               const isDriver = activity.carOffers.some(
                 (co) => co.driver.id === p.user.id && co.status !== 'cancelled'
               )
+              const playerBatches = activity.reminderBatches
+                .map((b) => ({ batch: b, receipt: b.receipts.find((r) => r.userId === p.user.id) }))
+                .filter((x) => x.receipt)
               return (
                 <motion.div
                   key={p.user.id}
@@ -367,11 +658,43 @@ export default function CheckIn() {
                             🚗 车主
                           </span>
                         )}
+                        {playerBatches.slice(0, 3).map(({ batch, receipt }) => {
+                          const rm = getReminderMeta(batch.notificationType)
+                          if (!rm) return null
+                          return (
+                            <span
+                              key={batch.id}
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] border ${rm.bg} ${rm.color} ${rm.border}`}
+                              title={rm.short}
+                            >
+                              {receipt?.replyEta ? (
+                                <Clock className="w-3 h-3" />
+                              ) : receipt?.read ? (
+                                <Eye className="w-3 h-3" />
+                              ) : (
+                                <EyeOff className="w-3 h-3" />
+                              )}
+                              {rm.short.replace('提醒', '').replace('催促', '')}
+                            </span>
+                          )
+                        })}
                       </div>
                       <div className="text-xs text-neon-lavender/60 mt-0.5 flex items-center gap-1.5">
                         <MapPin className="w-3 h-3" />
                         {p.pickupArea || '未指定上车区域'}
                       </div>
+                      {playerBatches.some((x) => x.receipt?.replyEta) && (
+                        <div className="text-[11px] text-neon-gold mt-0.5 flex items-center gap-1 flex-wrap">
+                          {playerBatches
+                            .filter((x) => x.receipt?.replyEta)
+                            .map(({ batch, receipt }) => (
+                              <span key={batch.id} className="inline-flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                预计{receipt?.replyEta}
+                              </span>
+                            ))}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       {(
@@ -446,7 +769,7 @@ export default function CheckIn() {
                   {idx < notifications.length - 1 && (
                     <div
                       className={`absolute left-[15px] top-8 w-px h-[calc(100%+4px)] ${
-                        isReminder ? 'bg-neon-magenta/30' : 'bg-neon-lavender/15'
+                        isReminder ? (rm ? rm.border.replace('border-', 'bg-').replace('/40', '/30') : 'bg-neon-magenta/30') : 'bg-neon-lavender/15'
                       }`}
                     />
                   )}
@@ -454,7 +777,7 @@ export default function CheckIn() {
                   <div
                     className={`absolute left-0 top-1 w-8 h-8 rounded-full flex items-center justify-center shrink-0 z-10 ${
                       isReminder
-                        ? `bg-gradient-to-br ${rm!.bg} border-2 ${rm!.border} shadow-[0_0_18px_rgba(233,69,96,0.35)]`
+                        ? `bg-gradient-to-br ${rm!.gradient} border-2 ${rm!.border} shadow-[0_0_18px_rgba(233,69,96,0.35)]`
                         : 'bg-ink-deep border-2 border-neon-lavender/20'
                     }`}
                   >
@@ -471,12 +794,12 @@ export default function CheckIn() {
                     transition={{ delay: idx * 0.02 }}
                     className={`relative rounded-2xl overflow-hidden ${
                       isReminder
-                        ? `bg-gradient-to-br ${rm!.bg} border-2 ${rm!.border}`
+                        ? `bg-gradient-to-br ${rm!.gradient} border-2 ${rm!.border}`
                         : 'glass-card border border-neon-lavender/10'
                     }`}
                   >
                     {isReminder && (
-                      <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-neon-magenta/60 to-transparent" />
+                      <div className={`absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-current/60 to-transparent ${rm!.color}`} />
                     )}
                     <div className="p-4">
                       <div className="flex items-start gap-3">

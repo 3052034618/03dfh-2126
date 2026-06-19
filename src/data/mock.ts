@@ -10,16 +10,16 @@ const avatars = [
 ]
 
 export const mockUsers: User[] = [
-  { id: 'u1', nickname: '剧本杀小队长', avatar: avatars[0], isCarOwner: true },
-  { id: 'u2', nickname: '推理狂魔', avatar: avatars[1], isCarOwner: false },
-  { id: 'u3', nickname: '老司机阿杰', avatar: avatars[2], isCarOwner: true },
-  { id: 'u4', nickname: '剧本猎人', avatar: avatars[3], isCarOwner: false },
-  { id: 'u5', nickname: '夜行侠', avatar: avatars[4], isCarOwner: true },
-  { id: 'u6', nickname: '萌新一号', avatar: avatars[5], isCarOwner: false },
-  { id: 'u7', nickname: '车队队长', avatar: avatars[0], isCarOwner: true },
-  { id: 'u8', nickname: '密室女王', avatar: avatars[1], isCarOwner: false },
-  { id: 'u9', nickname: '暴风推理', avatar: avatars[2], isCarOwner: true },
-  { id: 'u10', nickname: '局头小王', avatar: avatars[3], isCarOwner: false },
+  { id: 'u1', nickname: '剧本杀小队长', avatar: avatars[0], isCarOwner: true, phone: '138****1001' },
+  { id: 'u2', nickname: '推理狂魔', avatar: avatars[1], isCarOwner: false, phone: '138****2002' },
+  { id: 'u3', nickname: '老司机阿杰', avatar: avatars[2], isCarOwner: true, phone: '139****3003' },
+  { id: 'u4', nickname: '剧本猎人', avatar: avatars[3], isCarOwner: false, phone: '137****4004' },
+  { id: 'u5', nickname: '夜行侠', avatar: avatars[4], isCarOwner: true, phone: '136****5005' },
+  { id: 'u6', nickname: '萌新一号', avatar: avatars[5], isCarOwner: false, phone: '135****6006' },
+  { id: 'u7', nickname: '车队队长', avatar: avatars[0], isCarOwner: true, phone: '138****7007' },
+  { id: 'u8', nickname: '密室女王', avatar: avatars[1], isCarOwner: false, phone: '138****8008' },
+  { id: 'u9', nickname: '暴风推理', avatar: avatars[2], isCarOwner: true, phone: '139****9009' },
+  { id: 'u10', nickname: '局头小王', avatar: avatars[3], isCarOwner: false, phone: '138****0010' },
 ]
 
 const p = (u: User, area: string, status: CheckinStatus = 'not_arrived', car?: string) => ({
@@ -56,17 +56,30 @@ export const mockActivities: Activity[] = [
       {
         id: 'fg1', activityId: 'a1', type: 'outbound', meetingPoint: '学院路创意大厦B2门口', departureTime: '2026-06-21T18:00:00',
         cars: [
-          { carOfferId: 'co1', driver: mockUsers[2], driverPickupArea: '五道口', route: '五道口 → 创意大厦', passengers: [{ user: mockUsers[0], pickupArea: '五道口' }, { user: mockUsers[1], pickupArea: '五道口' }] },
-          { carOfferId: 'co2', driver: mockUsers[4], driverPickupArea: '西二旗', route: '西二旗 → 创意大厦', passengers: [{ user: mockUsers[3], pickupArea: '西二旗' }, { user: mockUsers[5], pickupArea: '西二旗' }] },
+          { carOfferId: 'co1', driver: mockUsers[2], driverPickupArea: '五道口', route: '五道口 → 知春路 → 大学城店', executionStatus: 'waiting',
+            passengers: [
+              { user: mockUsers[0], pickupArea: '五道口', boardingStatus: 'waiting' },
+              { user: mockUsers[1], pickupArea: '五道口', boardingStatus: 'boarded' },
+            ] },
+          { carOfferId: 'co2', driver: mockUsers[4], driverPickupArea: '西二旗', route: '西二旗 → 上地 → 大学城店', executionStatus: 'boarding',
+            passengers: [
+              { user: mockUsers[3], pickupArea: '西二旗', boardingStatus: 'boarded' },
+              { user: mockUsers[5], pickupArea: '西二旗', boardingStatus: 'waiting' },
+            ] },
         ],
       },
       {
         id: 'fg2', activityId: 'a1', type: 'return', meetingPoint: '创意大厦B2门口', departureTime: '2026-06-21T23:30:00',
         cars: [
-          { carOfferId: 'co1', driver: mockUsers[2], driverPickupArea: '五道口', route: '创意大厦 → 五道口', passengers: [{ user: mockUsers[0], pickupArea: '五道口' }, { user: mockUsers[1], pickupArea: '五道口' }] },
+          { carOfferId: 'co1', driver: mockUsers[2], driverPickupArea: '五道口', route: '大学城店 → 五道口', executionStatus: 'waiting',
+            passengers: [
+              { user: mockUsers[0], pickupArea: '五道口', boardingStatus: 'waiting' },
+              { user: mockUsers[1], pickupArea: '五道口', boardingStatus: 'waiting' },
+            ] },
         ],
       },
     ],
+    reminderBatches: [],
     status: 'recruiting',
     deadline: '2026-06-21T12:00:00',
     isFriendsOnly: false,
@@ -97,6 +110,7 @@ export const mockActivities: Activity[] = [
       { id: 'co4', activityId: 'a2', driver: mockUsers[8], pickupArea: '三元桥', availableSeats: 3, waitAfterGame: true, status: 'pending', notes: '', createdAt: '2026-06-21T11:00:00' },
     ],
     fleetGroups: [],
+    reminderBatches: [],
     status: 'recruiting',
     deadline: '2026-06-22T10:00:00',
     isFriendsOnly: false,
@@ -131,10 +145,16 @@ export const mockActivities: Activity[] = [
       {
         id: 'fg3', activityId: 'a3', type: 'outbound', meetingPoint: '知春路地铁站B口', departureTime: '2026-06-23T17:30:00',
         cars: [
-          { carOfferId: 'co5', driver: mockUsers[9], driverPickupArea: '知春路', route: '知春路 → 中关村', passengers: [{ user: mockUsers[0], pickupArea: '知春路' }, { user: mockUsers[3], pickupArea: '知春路' }, { user: mockUsers[5], pickupArea: '知春路' }] },
+          { carOfferId: 'co5', driver: mockUsers[9], driverPickupArea: '知春路', route: '知春路 → 中关村店', executionStatus: 'waiting',
+            passengers: [
+              { user: mockUsers[0], pickupArea: '知春路', boardingStatus: 'waiting' },
+              { user: mockUsers[3], pickupArea: '知春路', boardingStatus: 'waiting' },
+              { user: mockUsers[5], pickupArea: '知春路', boardingStatus: 'waiting' },
+            ] },
         ],
       },
     ],
+    reminderBatches: [],
     status: 'confirmed',
     deadline: '2026-06-23T10:00:00',
     isFriendsOnly: true,
@@ -161,6 +181,7 @@ export const mockActivities: Activity[] = [
     ],
     carOffers: [],
     fleetGroups: [],
+    reminderBatches: [],
     status: 'recruiting',
     deadline: '2026-06-24T12:00:00',
     isFriendsOnly: false,
