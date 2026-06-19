@@ -1,11 +1,11 @@
-import { Car } from 'lucide-react'
+import { Car, CarFront } from 'lucide-react'
 
 interface UserAvatarProps {
   nickname: string
   avatar?: string
   isCarOwner?: boolean
   size?: 'sm' | 'md' | 'lg'
-  status?: 'not_arrived' | 'arrived' | 'late'
+  status?: 'not_arrived' | 'arrived' | 'late' | 'ride_share'
 }
 
 const sizeMap = {
@@ -18,6 +18,7 @@ const statusBorder: Record<string, string> = {
   arrived: 'ring-2 ring-neon-green/60',
   late: 'ring-2 ring-neon-gold/60',
   not_arrived: 'ring-2 ring-gray-600/60',
+  ride_share: 'ring-2 ring-neon-blue/60',
 }
 
 const gradients = [
@@ -49,6 +50,11 @@ export default function UserAvatar({ nickname, isCarOwner, size = 'md', status }
         {isCarOwner && (
           <div className="absolute -top-1 -right-1 w-4 h-4 bg-neon-pink rounded-full flex items-center justify-center">
             <Car size={8} className="text-white" />
+          </div>
+        )}
+        {status === 'ride_share' && (
+          <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-neon-blue rounded-full flex items-center justify-center">
+            <CarFront size={8} className="text-white" />
           </div>
         )}
       </div>

@@ -1,17 +1,22 @@
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { MapPin, CheckCircle, Clock, AlertTriangle, Car, Bell } from 'lucide-react'
+import {
+  MapPin, CheckCircle, Clock, AlertTriangle, Car, Bell, CarFront, X,
+} from 'lucide-react'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { useStore } from '@/store/useStore'
 import PageHeader from '@/components/PageHeader'
 import UserAvatar from '@/components/UserAvatar'
+import type { CheckinStatus, Player } from '@/types'
 
 const typeIcons: Record<string, typeof MapPin> = {
   car_offer: Car,
   checkin: CheckCircle,
   change: AlertTriangle,
   late: Clock,
-  ride_change: Car,
+  ride_change: CarFront,
+  restore: AlertTriangle,
 }
 
 const typeColors: Record<string, string> = {
@@ -20,6 +25,7 @@ const typeColors: Record<string, string> = {
   change: 'text-neon-gold',
   late: 'text-neon-gold',
   ride_change: 'text-neon-blue',
+  restore: 'text-gray-400',
 }
 
 const typeDotColors: Record<string, string> = {
@@ -28,6 +34,14 @@ const typeDotColors: Record<string, string> = {
   change: 'bg-neon-gold',
   late: 'bg-neon-gold',
   ride_change: 'bg-neon-blue',
+  restore: 'bg-gray-500',
+}
+
+const statusLabels: Record<CheckinStatus, { label: string; cls: string }> = {
+  not_arrived: { label: '未到', cls: 'bg-gray-600/20 text-gray-500' },
+  arrived: { label: '已到', cls: 'bg-neon-green/20 text-neon-green' },
+  late: { label: '迟到', cls: 'bg-neon-gold/20 text-neon-gold' },
+  ride_share: { label: '网约车', cls: 'bg-neon-blue/20 text-neon-blue' },
 }
 
 export default function CheckIn() {
@@ -35,9 +49,11 @@ export default function CheckIn() {
   const navigate = useNavigate()
   const getActivity = useStore((s) => s.getActivity)
   const checkin = useStore((s) => s.checkin)
+  const setPlayerStatus = useStore((s) => s.setPlayerStatus)
   const currentUser = useStore((s) => s.currentUser)
   const notifications = useStore((s) => s.notifications)
   const activity = getActivity(activityId || '')
+  const [menuPlayer, setMenuPlayer] = useState<Player | null>(null)
 
   const activityNotifications = notifications.filter((n) => n.activityId === activityId)
   const sortedNotifications = [...activityNotifications].sort(
@@ -59,13 +75,21 @@ export default function CheckIn() {
   }
 
   const arrivedCount = activity.players.filter((p) => p.checkinStatus === 'arrived').length
-  const notArrivedPlayers = activity.players.filter((p) => p.checkinStatus === 'not_arrived')
+  const lateCount = activity.players.filter((p) => p.checkinStatus === 'late').length
+  const rideShareCount = activity.players.filter((p) => p.checkinStatus === 'ride_share').length
+  const notArrivedCount = activity.players.filter((p) => p.checkinStatus === 'not_arrived').length
   const isCurrentUserInActivity = activity.players.some((p) => p.user.id === currentUser.id)
 
   const handleCheckin = () => {
     if (isCurrentUserInActivity) {
       checkin(activity.id, currentUser.id)
     }
+  }
+
+  const applyStatus = (status: CheckinStatus) => {
+    if (!menuPlayer) return
+    setPlayerStatus(activity.id, menuPlayer.user.id, status)
+    setMenuPlayer(null)
   }
 
   return (
@@ -87,23 +111,27 @@ export default function CheckIn() {
               <CheckCircle size={18} className="text-neon-green" />
               集合打卡
             </h3>
-            <span className="text-sm text-gray-400">{arrivedCount}/{activity.players.length} 已到</span>
+            <span className="text-sm text-gray-400">
+              {arrivedCount}/{activity.players.length} 已到
+            </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            <div className="bg-neon-green/10 rounded-xl p-3 text-center">
-              <p className="text-2xl font-bold text-neon-green">{arrivedCount}</p>
-              <p className="text-xs text-gray-400">已到</p>
+          <div className="grid grid-cols-4 gap-2 mb-4">
+            <div className="bg-neon-green/10 rounded-xl p-2.5 text-center">
+              <p className="text-xl font-bold text-neon-green">{arrivedCount}</p>
+              <p className="text-[10px] text-gray-400">已到</p>
             </div>
-            <div className="bg-neon-gold/10 rounded-xl p-3 text-center">
-              <p className="text-2xl font-bold text-neon-gold">
-                {activity.players.filter((p) => p.checkinStatus === 'late').length}
-              </p>
-              <p className="text-xs text-gray-400">迟到</p>
+            <div className="bg-neon-gold/10 rounded-xl p-2.5 text-center">
+              <p className="text-xl font-bold text-neon-gold">{lateCount}</p>
+              <p className="text-[10px] text-gray-400">迟到</p>
             </div>
-            <div className="bg-gray-600/10 rounded-xl p-3 text-center">
-              <p className="text-2xl font-bold text-gray-400">{notArrivedPlayers.length}</p>
-              <p className="text-xs text-gray-400">未到</p>
+            <div className="bg-neon-blue/10 rounded-xl p-2.5 text-center">
+              <p className="text-xl font-bold text-neon-blue">{rideShareCount}</p>
+              <p className="text-[10px] text-gray-400">网约车</p>
+            </div>
+            <div className="bg-gray-600/10 rounded-xl p-2.5 text-center">
+              <p className="text-xl font-bold text-gray-400">{notArrivedCount}</p>
+              <p className="text-[10px] text-gray-400">未到</p>
             </div>
           </div>
 
@@ -118,7 +146,11 @@ export default function CheckIn() {
 
           <div className="space-y-2">
             {activity.players.map((player, i) => (
-              <div key={i} className="flex items-center justify-between p-2.5 bg-night-700/30 rounded-xl">
+              <button
+                key={i}
+                onClick={() => setMenuPlayer(player)}
+                className="w-full text-left flex items-center justify-between p-2.5 bg-night-700/30 rounded-xl hover:bg-night-700/60 transition-colors"
+              >
                 <div className="flex items-center gap-3">
                   <UserAvatar
                     nickname={player.user.nickname}
@@ -126,16 +158,17 @@ export default function CheckIn() {
                     size="sm"
                     status={player.checkinStatus}
                   />
-                  <span className="text-sm text-gray-300">{player.user.nickname}</span>
+                  <div>
+                    <span className="text-sm text-gray-200">{player.user.nickname}</span>
+                    {player.pickupArea && (
+                      <p className="text-[10px] text-gray-500">{player.pickupArea}</p>
+                    )}
+                  </div>
                 </div>
-                <span className={`text-xs px-2 py-0.5 rounded-full ${
-                  player.checkinStatus === 'arrived' ? 'bg-neon-green/20 text-neon-green' :
-                  player.checkinStatus === 'late' ? 'bg-neon-gold/20 text-neon-gold' :
-                  'bg-gray-600/20 text-gray-500'
-                }`}>
-                  {player.checkinStatus === 'arrived' ? '已到' : player.checkinStatus === 'late' ? '迟到' : '未到'}
+                <span className={`text-xs px-2 py-0.5 rounded-full ${statusLabels[player.checkinStatus].cls}`}>
+                  {statusLabels[player.checkinStatus].label}
                 </span>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -156,7 +189,9 @@ export default function CheckIn() {
                   const dotColor = typeDotColors[notification.type] || 'bg-gray-400'
                   return (
                     <div key={i} className="flex gap-3 relative">
-                      <div className={`w-6 h-6 rounded-full ${dotColor}/20 flex items-center justify-center shrink-0 z-10`}>
+                      <div
+                        className={`w-6 h-6 rounded-full ${dotColor}/20 flex items-center justify-center shrink-0 z-10`}
+                      >
                         <div className={`w-2 h-2 rounded-full ${dotColor}`} />
                       </div>
                       <div className="flex-1 bg-night-700/30 rounded-xl p-3">
@@ -165,7 +200,9 @@ export default function CheckIn() {
                           <div className="flex-1">
                             <p className="text-sm text-gray-300">{notification.content}</p>
                             <p className="text-xs text-gray-500 mt-1">
-                              {format(new Date(notification.timestamp), 'M月d日 HH:mm', { locale: zhCN })}
+                              {format(new Date(notification.timestamp), 'M月d日 HH:mm', {
+                                locale: zhCN,
+                              })}
                             </p>
                           </div>
                         </div>
@@ -180,6 +217,111 @@ export default function CheckIn() {
           )}
         </div>
       </div>
+
+      {menuPlayer && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-end"
+          onClick={() => setMenuPlayer(null)}
+        >
+          <div
+            className="w-full bg-night-800 border-t border-neon-pink/20 rounded-t-3xl p-5 animate-slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <UserAvatar
+                  nickname={menuPlayer.user.nickname}
+                  isCarOwner={menuPlayer.user.isCarOwner}
+                  status={menuPlayer.checkinStatus}
+                />
+                <div>
+                  <p className="text-white font-medium">{menuPlayer.user.nickname}</p>
+                  <p className="text-xs text-gray-500">
+                    当前状态：{statusLabels[menuPlayer.checkinStatus].label}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setMenuPlayer(null)}
+                className="w-8 h-8 rounded-full bg-night-700 flex items-center justify-center"
+              >
+                <X size={16} className="text-gray-400" />
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-500 mb-3">选择要设置的状态：</p>
+            <div className="space-y-2">
+              <button
+                onClick={() => applyStatus('arrived')}
+                className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors ${
+                  menuPlayer.checkinStatus === 'arrived'
+                    ? 'bg-neon-green/20 border border-neon-green/40'
+                    : 'bg-night-700/50 hover:bg-night-700'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <CheckCircle size={16} className="text-neon-green" />
+                  <span className="text-gray-200 text-sm">标记已到</span>
+                </div>
+                {menuPlayer.checkinStatus === 'arrived' && (
+                  <CheckCircle size={16} className="text-neon-green" />
+                )}
+              </button>
+
+              <button
+                onClick={() => applyStatus('late')}
+                className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors ${
+                  menuPlayer.checkinStatus === 'late'
+                    ? 'bg-neon-gold/20 border border-neon-gold/40'
+                    : 'bg-night-700/50 hover:bg-night-700'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Clock size={16} className="text-neon-gold" />
+                  <span className="text-gray-200 text-sm">标记迟到</span>
+                </div>
+                {menuPlayer.checkinStatus === 'late' && (
+                  <CheckCircle size={16} className="text-neon-gold" />
+                )}
+              </button>
+
+              <button
+                onClick={() => applyStatus('ride_share')}
+                className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors ${
+                  menuPlayer.checkinStatus === 'ride_share'
+                    ? 'bg-neon-blue/20 border border-neon-blue/40'
+                    : 'bg-night-700/50 hover:bg-night-700'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <CarFront size={16} className="text-neon-blue" />
+                  <span className="text-gray-200 text-sm">改坐网约车</span>
+                </div>
+                {menuPlayer.checkinStatus === 'ride_share' && (
+                  <CheckCircle size={16} className="text-neon-blue" />
+                )}
+              </button>
+
+              <button
+                onClick={() => applyStatus('not_arrived')}
+                className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors ${
+                  menuPlayer.checkinStatus === 'not_arrived'
+                    ? 'bg-gray-500/20 border border-gray-500/40'
+                    : 'bg-night-700/50 hover:bg-night-700'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={16} className="text-gray-400" />
+                  <span className="text-gray-200 text-sm">恢复未到</span>
+                </div>
+                {menuPlayer.checkinStatus === 'not_arrived' && (
+                  <CheckCircle size={16} className="text-gray-400" />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

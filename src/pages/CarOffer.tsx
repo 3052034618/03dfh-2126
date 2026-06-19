@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Car, Users, MapPin, ToggleLeft, ToggleRight } from 'lucide-react'
+import { Car, Users, MapPin, ToggleLeft, ToggleRight, AlertCircle } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import PageHeader from '@/components/PageHeader'
 import { pickupAreas } from '@/data/mock'
@@ -18,6 +18,7 @@ export default function CarOffer() {
   const [waitAfterGame, setWaitAfterGame] = useState(true)
   const [notes, setNotes] = useState('')
   const [submitted, setSubmitted] = useState(false)
+  const [touched, setTouched] = useState<Record<string, boolean>>({})
 
   if (!activity) {
     return (
@@ -27,7 +28,10 @@ export default function CarOffer() {
     )
   }
 
+  const showAreaError = touched.pickupArea && !pickupArea
+
   const handleSubmit = () => {
+    setTouched((t) => ({ ...t, pickupArea: true }))
     if (!pickupArea) return
 
     const offer = {
@@ -42,7 +46,7 @@ export default function CarOffer() {
       createdAt: new Date().toISOString(),
     }
 
-    addCarOffer(offer)
+    addCarOffer(offer, pickupArea)
     setSubmitted(true)
   }
 
@@ -78,15 +82,19 @@ export default function CarOffer() {
           <p className="text-sm text-gray-400">{activity.scriptName} · {activity.storeName}</p>
         </div>
 
-        <div className="glass-card p-4 space-y-4">
+        <div className={`glass-card p-4 space-y-4 ${showAreaError ? 'border border-red-500/50' : ''}`}>
           <h3 className="font-display text-lg text-white flex items-center gap-2">
             <MapPin size={16} className="text-neon-pink" /> 上车区域
+            <span className="text-red-400 text-xs">*</span>
           </h3>
           <div className="flex flex-wrap gap-2">
             {pickupAreas.map((area) => (
               <button
                 key={area}
-                onClick={() => setPickupArea(area)}
+                onClick={() => {
+                  setPickupArea(area)
+                  setTouched((t) => ({ ...t, pickupArea: true }))
+                }}
                 className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                   pickupArea === area
                     ? 'bg-neon-gradient text-white shadow-[0_0_8px_rgba(233,69,96,0.3)]'
@@ -97,6 +105,11 @@ export default function CarOffer() {
               </button>
             ))}
           </div>
+          {showAreaError && (
+            <p className="text-xs text-red-400 flex items-center gap-1 animate-fade-in">
+              <AlertCircle size={12} /> 请选择你的上车区域
+            </p>
+          )}
         </div>
 
         <div className="glass-card p-4 space-y-4">
@@ -133,14 +146,13 @@ export default function CarOffer() {
 
         <button
           onClick={handleSubmit}
-          disabled={!pickupArea}
           className={`w-full py-4 text-lg rounded-full font-bold transition-all ${
             pickupArea
               ? 'bg-neon-gradient text-white shadow-[0_4px_16px_rgba(233,69,96,0.3)] hover:shadow-[0_6px_24px_rgba(233,69,96,0.5)]'
               : 'bg-night-700 text-gray-500 cursor-not-allowed'
           }`}
         >
-          确认出车
+          {pickupArea ? '确认出车' : '请先选择上车区域'}
         </button>
       </div>
     </div>

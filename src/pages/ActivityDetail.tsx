@@ -170,15 +170,33 @@ export default function ActivityDetail() {
             玩家列表
             <span className="text-xs text-gray-500 font-body ml-auto">{arrivedCount}/{activity.players.length} 已到</span>
           </h3>
-          <div className="flex flex-wrap gap-3">
+          <div className="space-y-2">
             {activity.players.map((player, i) => (
-              <UserAvatar
+              <div
                 key={i}
-                nickname={player.user.nickname}
-                isCarOwner={player.user.isCarOwner}
-                size="md"
-                status={player.checkinStatus}
-              />
+                className="flex items-center gap-3 p-2 rounded-lg bg-night-700/30"
+              >
+                <UserAvatar
+                  nickname={player.user.nickname}
+                  isCarOwner={player.user.isCarOwner}
+                  size="sm"
+                  status={player.checkinStatus}
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-white truncate">
+                    {player.user.nickname}
+                    {player.checkinStatus === 'ride_share' && (
+                      <span className="ml-2 text-xs text-neon-blue">·网约车</span>
+                    )}
+                    {player.checkinStatus === 'late' && (
+                      <span className="ml-2 text-xs text-neon-gold">·迟到</span>
+                    )}
+                  </p>
+                  {player.pickupArea && (
+                    <p className="text-xs text-gray-500">上车: {player.pickupArea}</p>
+                  )}
+                </div>
+              </div>
             ))}
           </div>
         </div>

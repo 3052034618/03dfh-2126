@@ -24,10 +24,16 @@ export interface CarOffer {
   createdAt: string
 }
 
+export interface FleetPassenger {
+  user: User
+  pickupArea: string
+}
+
 export interface FleetCar {
   carOfferId: string
   driver: User
-  passengers: User[]
+  driverPickupArea: string
+  passengers: FleetPassenger[]
   route: string
 }
 
@@ -40,9 +46,12 @@ export interface FleetGroup {
   departureTime: string
 }
 
+export type CheckinStatus = 'not_arrived' | 'arrived' | 'late' | 'ride_share'
+
 export interface Player {
   user: User
-  checkinStatus: 'not_arrived' | 'arrived' | 'late'
+  checkinStatus: CheckinStatus
+  pickupArea?: string
   carOfferId?: string
   assignedCarId?: string
 }
@@ -69,10 +78,18 @@ export interface Activity {
   createdAt: string
 }
 
+export type NotificationType =
+  | 'car_offer'
+  | 'checkin'
+  | 'change'
+  | 'late'
+  | 'ride_change'
+  | 'restore'
+
 export interface AppNotification {
   id: string
   activityId: string
-  type: 'car_offer' | 'checkin' | 'change' | 'late' | 'ride_change'
+  type: NotificationType
   content: string
   user: User
   timestamp: string
