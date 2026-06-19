@@ -1,6 +1,16 @@
 import { create } from 'zustand'
-import type { Activity, CarOffer, AppNotification, FleetGroup, Player, CheckinStatus, FleetPassenger, FleetCar } from '@/types'
-import { mockActivities, mockNotifications, mockUsers } from '@/data/mock'
+import type {
+  Activity,
+  CarOffer,
+  AppNotification,
+  FleetGroup,
+  Player,
+  CheckinStatus,
+  FleetPassenger,
+  FleetCar,
+  ReminderTarget,
+} from '@/types'
+import { mockActivities, mockNotifications, mockUsers, areaAdjacency } from '@/data/mock'
 
 interface AppState {
   activities: Activity[]
@@ -11,8 +21,17 @@ interface AppState {
   confirmCarOffer: (activityId: string, offerId: string) => void
   cancelCarOffer: (activityId: string, offerId: string) => void
   generateFleetGroups: (activityId: string) => void
+  movePassenger: (
+    activityId: string,
+    groupType: 'outbound' | 'return',
+    passengerUserId: string,
+    fromCarOfferId: string,
+    toCarOfferId: string
+  ) => boolean
+  updateFleetGroup: (activityId: string, group: FleetGroup) => void
   checkin: (activityId: string, userId: string) => void
   setPlayerStatus: (activityId: string, userId: string, status: CheckinStatus) => void
+  sendReminder: (activityId: string, target: ReminderTarget) => number
   updatePlayerPickupArea: (activityId: string, userId: string, area: string) => void
   addNotification: (notification: AppNotification) => void
   getActivity: (id: string) => Activity | undefined
@@ -130,62 +149,135 @@ export const useStore = create<AppState>((set, get) => ({
       areaToPlayers.get(area)!.push({ user: pl.user, pickupArea: area })
     }
 
-    const sortedAreas = [...areaToPlayers.keys()].sort((a, b) => {
-      const countA = areaToPlayers.get(a)!.length
-      const countB = areaToPlayers.get(b)!.length
-      return countB - countA
-    })
+    const getAreaCluster = (startArea: string, visited: Set<string>): string[] => {
+      if (visited.has(startArea)) return []
+      visited.add(startArea)
+      const neighbors = areaAdjacency[startArea] || []
+      const cluster = [startArea]
+      for (const n of neighbors) {
+        if (!visited.has(n) && areaToPlayers.has(n)) {
+          cluster.push(...getAreaCluster(n, visited))
+        }
+      }
+      return cluster
+    }
 
-    const carsWithArea = confirmedOffers.map((co) => ({
+    const clusters: string[][] = []
+    const usedAreas = new Set<string>()
+    const sortedByCount = [...areaToPlayers.keys()].sort(
+      (a, b) => (areaToPlayers.get(b)?.length || 0) - (areaToPlayers.get(a)?.length || 0)
+    )
+    for (const area of sortedByCount) {
+      if (!usedAreas.has(area)) {
+        const cluster = getAreaCluster(area, new Set())
+        const relevantCluster = cluster.filter((a) => areaToPlayers.has(a))
+        relevantCluster.forEach((a) => usedAreas.add(a))
+        if (relevantCluster.length > 0) clusters.push(relevantCluster)
+      }
+    }
+
+    const carsWithCapacity = confirmedOffers.map((co) => ({
       car: co,
       passengers: [] as FleetPassenger[],
-      remaining: co.availableSeats - 1,
+      remaining: co.availableSeats,
     }))
 
-    const areaDistances: Record<string, number> = {}
-    sortedAreas.forEach((a, i) => (areaDistances[a] = i))
+    const getCarAreaMatchScore = (
+      car: (typeof carsWithCapacity)[0],
+      clusterAreas: string[]
+    ) => {
+      const carArea = car.car.pickupArea
+      if (clusterAreas.includes(carArea)) return 100
+      for (const a of clusterAreas) {
+        const adj = areaAdjacency[a] || []
+        if (adj.includes(carArea)) return 80
+      }
+      return 0
+    }
 
-    carsWithArea.sort((a, b) => {
-      const da = areaDistances[a.car.pickupArea] ?? 999
-      const db = areaDistances[b.car.pickupArea] ?? 999
-      return da - db
-    })
+    for (const cluster of clusters) {
+      const clusterPassengers: FleetPassenger[] = []
+      for (const area of cluster) {
+        clusterPassengers.push(...(areaToPlayers.get(area) || []))
+      }
 
-    for (const area of sortedAreas) {
-      const passengers = areaToPlayers.get(area)!
+      const sortedCars = [...carsWithCapacity]
+        .filter((c) => c.remaining > 0)
+        .sort((a, b) => getCarAreaMatchScore(b, cluster) - getCarAreaMatchScore(a, cluster))
+
       let pi = 0
-      while (pi < passengers.length) {
-        const car = carsWithArea.find((c) => c.remaining > 0)
+      while (pi < clusterPassengers.length) {
+        const car = sortedCars.find((c) => c.remaining > 0)
         if (!car) break
-        car.passengers.push(passengers[pi])
+        car.passengers.push(clusterPassengers[pi])
         car.remaining -= 1
         pi += 1
       }
     }
 
-    const outboundCars: FleetCar[] = carsWithArea.map((cw) => {
-      const areas = Array.from(new Set([cw.car.pickupArea, ...cw.passengers.map((p) => p.pickupArea)]))
-      const storeShort = activity.storeName.split('·')[1] || activity.storeName
+    const buildRouteOrder = (
+      car: (typeof carsWithCapacity)[0]
+    ): string[] => {
+      const allAreas = Array.from(
+        new Set([car.car.pickupArea, ...car.passengers.map((p) => p.pickupArea)])
+      )
+      if (allAreas.length === 0) return []
+      const ordered: string[] = []
+      const remaining = [...allAreas]
+      let current = car.car.pickupArea
+      ordered.push(current)
+      remaining.splice(remaining.indexOf(current), 1)
+      while (remaining.length > 0) {
+        let next = remaining[0]
+        let bestScore = -1
+        for (const r of remaining) {
+          const curAdj = areaAdjacency[current] || []
+          const score = curAdj.includes(r) ? 10 : 0
+          if (score > bestScore) {
+            bestScore = score
+            next = r
+          }
+        }
+        ordered.push(next)
+        remaining.splice(remaining.indexOf(next), 1)
+        current = next
+      }
+      return ordered
+    }
+
+    const storeShort = activity.storeName.split('·')[1] || activity.storeName
+
+    const outboundCars: FleetCar[] = carsWithCapacity.map((cw) => {
+      const order = buildRouteOrder(cw)
+      const passengersOrdered: FleetPassenger[] = []
+      for (const area of order) {
+        const areaPs = cw.passengers.filter((p) => p.pickupArea === area)
+        passengersOrdered.push(...areaPs)
+      }
       return {
         carOfferId: cw.car.id,
         driver: cw.car.driver,
         driverPickupArea: cw.car.pickupArea,
-        passengers: cw.passengers,
-        route: `${areas.join('、')} → ${storeShort}`,
+        passengers: passengersOrdered,
+        route: `${order.join(' → ')} → ${storeShort}`,
       }
     })
 
-    const returnCars: FleetCar[] = carsWithArea
+    const returnCars: FleetCar[] = carsWithCapacity
       .filter((cw) => cw.car.waitAfterGame)
       .map((cw) => {
-        const areas = Array.from(new Set([cw.car.pickupArea, ...cw.passengers.map((p) => p.pickupArea)]))
-        const storeShort = activity.storeName.split('·')[1] || activity.storeName
+        const order = buildRouteOrder(cw).reverse()
+        const passengersOrdered: FleetPassenger[] = []
+        for (const area of order) {
+          const areaPs = cw.passengers.filter((p) => p.pickupArea === area)
+          passengersOrdered.push(...areaPs)
+        }
         return {
           carOfferId: cw.car.id,
           driver: cw.car.driver,
           driverPickupArea: cw.car.pickupArea,
-          passengers: cw.passengers,
-          route: `${storeShort} → ${areas.join('、')}`,
+          passengers: passengersOrdered,
+          route: `${storeShort} → ${order.join(' → ')}`,
         }
       })
 
@@ -223,6 +315,74 @@ export const useStore = create<AppState>((set, get) => ({
       ),
     }))
   },
+
+  movePassenger: (activityId, groupType, passengerUserId, fromCarOfferId, toCarOfferId) => {
+    const state = get()
+    const activity = state.activities.find((a) => a.id === activityId)
+    if (!activity) return false
+
+    const group = activity.fleetGroups.find((fg) => fg.type === groupType)
+    if (!group) return false
+
+    const fromCar = group.cars.find((c) => c.carOfferId === fromCarOfferId)
+    const toCar = group.cars.find((c) => c.carOfferId === toCarOfferId)
+    if (!fromCar || !toCar) return false
+
+    const carOffer = activity.carOffers.find((co) => co.id === toCarOfferId)
+    if (!carOffer) return false
+    if (toCar.passengers.length >= carOffer.availableSeats) return false
+
+    const passengerIndex = fromCar.passengers.findIndex((p) => p.user.id === passengerUserId)
+    if (passengerIndex === -1) return false
+
+    const passenger = fromCar.passengers[passengerIndex]
+
+    set((state) => ({
+      activities: state.activities.map((a) =>
+        a.id === activityId
+          ? {
+              ...a,
+              fleetGroups: a.fleetGroups.map((fg) =>
+                fg.type !== groupType
+                  ? fg
+                  : {
+                      ...fg,
+                      cars: fg.cars.map((c) => {
+                        if (c.carOfferId === fromCarOfferId) {
+                          return {
+                            ...c,
+                            passengers: c.passengers.filter(
+                              (p) => p.user.id !== passengerUserId
+                            ),
+                          }
+                        }
+                        if (c.carOfferId === toCarOfferId) {
+                          return { ...c, passengers: [...c.passengers, passenger] }
+                        }
+                        return c
+                      }),
+                    }
+              ),
+            }
+          : a
+      ),
+    }))
+    return true
+  },
+
+  updateFleetGroup: (activityId, group) =>
+    set((state) => ({
+      activities: state.activities.map((a) =>
+        a.id === activityId
+          ? {
+              ...a,
+              fleetGroups: a.fleetGroups.map((fg) =>
+                fg.type === group.type ? group : fg
+              ),
+            }
+          : a
+      ),
+    })),
 
   checkin: (activityId, userId) =>
     set((state) => {
@@ -300,6 +460,61 @@ export const useStore = create<AppState>((set, get) => ({
         ],
       }
     }),
+
+  sendReminder: (activityId, target) => {
+    const state = get()
+    const activity = state.activities.find((a) => a.id === activityId)
+    const currentUser = state.currentUser
+    if (!activity) return 0
+
+    let targetPlayers: Player[] = []
+    let notifType: AppNotification['type']
+    let contentTemplate: string
+
+    if (target === 'not_arrived') {
+      targetPlayers = activity.players.filter((p) => p.checkinStatus === 'not_arrived')
+      notifType = 'reminder_not_arrived'
+      contentTemplate = '局头提醒：发车时间快到了，请尽快到集合点'
+    } else if (target === 'late') {
+      targetPlayers = activity.players.filter((p) => p.checkinStatus === 'late')
+      notifType = 'reminder_late'
+      contentTemplate = '局头提醒：你已迟到，请尽快赶到集合点'
+    } else if (target === 'ride_share') {
+      targetPlayers = activity.players.filter((p) => p.checkinStatus === 'ride_share')
+      notifType = 'reminder_ride_share'
+      contentTemplate = '局头提醒：网约车请按时出发，别迟到了'
+    } else {
+      targetPlayers = activity.players.filter((p) => p.checkinStatus !== 'arrived')
+      notifType = 'reminder_not_arrived'
+      contentTemplate = '局头提醒：发车时间快到了'
+    }
+
+    if (targetPlayers.length === 0) return 0
+
+    const newNotifs: AppNotification[] = targetPlayers.map((p, i) => ({
+      id: `n_${Date.now()}_${i}`,
+      activityId,
+      type: notifType,
+      content: contentTemplate,
+      user: p.user,
+      timestamp: new Date().toISOString(),
+    }))
+
+    const summaryNotif: AppNotification = {
+      id: `n_summary_${Date.now()}`,
+      activityId,
+      type: 'change',
+      content: `局头发送了${targetPlayers.length}条${target === 'not_arrived' ? '未到' : target === 'late' ? '迟到' : target === 'ride_share' ? '网约车' : '全员'}提醒`,
+      user: currentUser,
+      timestamp: new Date().toISOString(),
+    }
+
+    set((state) => ({
+      notifications: [summaryNotif, ...newNotifs, ...state.notifications],
+    }))
+
+    return targetPlayers.length
+  },
 
   updatePlayerPickupArea: (activityId, userId, area) =>
     set((state) => ({

@@ -17,7 +17,6 @@ export default function CarOffer() {
   const [availableSeats, setAvailableSeats] = useState(3)
   const [waitAfterGame, setWaitAfterGame] = useState(true)
   const [notes, setNotes] = useState('')
-  const [submitted, setSubmitted] = useState(false)
   const [touched, setTouched] = useState<Record<string, boolean>>({})
 
   if (!activity) {
@@ -47,29 +46,7 @@ export default function CarOffer() {
     }
 
     addCarOffer(offer, pickupArea)
-    setSubmitted(true)
-  }
-
-  if (submitted) {
-    return (
-      <div className="min-h-screen bg-night-900 flex items-center justify-center">
-        <div className="text-center space-y-4 animate-fade-in">
-          <div className="w-20 h-20 bg-neon-pink/20 rounded-full flex items-center justify-center mx-auto">
-            <Car size={36} className="text-neon-pink" />
-          </div>
-          <h2 className="font-display text-2xl text-white">出车信息已提交！</h2>
-          <p className="text-gray-400 text-sm">局头将很快确认你的车源</p>
-          <div className="flex gap-3 justify-center mt-6">
-            <button onClick={() => navigate(`/activity/${activity.id}`)} className="neon-btn">
-              查看活动
-            </button>
-            <button onClick={() => navigate('/')} className="ghost-btn">
-              返回首页
-            </button>
-          </div>
-        </div>
-      </div>
-    )
+    navigate(`/activity/${activity.id}`)
   }
 
   return (
@@ -117,12 +94,13 @@ export default function CarOffer() {
             <Users size={16} className="text-neon-blue" /> 出车信息
           </h3>
           <div>
-            <label className="text-xs text-gray-400 mb-1 block">可带人数</label>
+            <label className="text-xs text-gray-400 mb-1 block">可带乘客数（不含司机）</label>
             <div className="flex items-center gap-3">
               <button onClick={() => setAvailableSeats(Math.max(1, availableSeats - 1))} className="w-10 h-10 rounded-full bg-night-700 text-white flex items-center justify-center hover:bg-night-600">-</button>
               <span className="text-xl font-bold text-white w-8 text-center">{availableSeats}</span>
               <button onClick={() => setAvailableSeats(Math.min(6, availableSeats + 1))} className="w-10 h-10 rounded-full bg-night-700 text-white flex items-center justify-center hover:bg-night-600">+</button>
             </div>
+            <p className="text-xs text-gray-500 mt-1">即除去你自己，还能坐几个人</p>
           </div>
           <div className="flex items-center justify-between">
             <div>

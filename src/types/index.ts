@@ -48,6 +48,8 @@ export interface FleetGroup {
 
 export type CheckinStatus = 'not_arrived' | 'arrived' | 'late' | 'ride_share'
 
+export type ReminderTarget = 'not_arrived' | 'late' | 'ride_share' | 'all'
+
 export interface Player {
   user: User
   checkinStatus: CheckinStatus
@@ -85,6 +87,9 @@ export type NotificationType =
   | 'late'
   | 'ride_change'
   | 'restore'
+  | 'reminder_not_arrived'
+  | 'reminder_late'
+  | 'reminder_ride_share'
 
 export interface AppNotification {
   id: string

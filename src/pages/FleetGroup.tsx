@@ -1,8 +1,20 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  Car, Users, MapPin, Clock, Share2, CheckCircle, ArrowRight, ArrowLeft,
-  ChevronDown, ChevronUp, AlertCircle,
+  Car,
+  Users,
+  MapPin,
+  Clock,
+  Share2,
+  CheckCircle,
+  ArrowRight,
+  ArrowLeft,
+  ChevronDown,
+  ChevronUp,
+  AlertCircle,
+  MoveRight,
+  UserMinus,
+  Save,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
@@ -10,6 +22,7 @@ import { useStore } from '@/store/useStore'
 import PageHeader from '@/components/PageHeader'
 import UserAvatar from '@/components/UserAvatar'
 import { pickupAreas } from '@/data/mock'
+import type { FleetPassenger } from '@/types'
 
 export default function FleetGroup() {
   const { activityId } = useParams<{ activityId: string }>()
@@ -18,10 +31,16 @@ export default function FleetGroup() {
   const generateFleetGroups = useStore((s) => s.generateFleetGroups)
   const confirmCarOffer = useStore((s) => s.confirmCarOffer)
   const updatePlayerPickupArea = useStore((s) => s.updatePlayerPickupArea)
+  const movePassenger = useStore((s) => s.movePassenger)
   const activity = getActivity(activityId || '')
+
   const [activeTab, setActiveTab] = useState<'outbound' | 'return'>('outbound')
   const [showSharePreview, setShowSharePreview] = useState(false)
   const [expandPlayers, setExpandPlayers] = useState(true)
+  const [moveTarget, setMoveTarget] = useState<{
+    passenger: FleetPassenger
+    fromCarOfferId: string
+  } | null>(null)
 
   if (!activity) {
     return (
@@ -39,12 +58,40 @@ export default function FleetGroup() {
     (p) => !activity.carOffers.some((co) => co.driver.id === p.user.id)
   )
 
+  const getCarOffer = (carOfferId: string) =>
+    activity.carOffers.find((co) => co.id === carOfferId)
+
+  const getRemainingSeats = (carOfferId: string, passengerCount: number) => {
+    const offer = getCarOffer(carOfferId)
+    if (!offer) return 0
+    return offer.availableSeats - passengerCount
+  }
+
   const handleGenerate = () => {
     generateFleetGroups(activity.id)
   }
 
   const handleConfirm = (offerId: string) => {
     confirmCarOffer(activity.id, offerId)
+  }
+
+  const handleMoveClick = (
+    passenger: FleetPassenger,
+    fromCarOfferId: string
+  ) => {
+    setMoveTarget({ passenger, fromCarOfferId })
+  }
+
+  const handleMoveConfirm = (toCarOfferId: string) => {
+    if (!moveTarget) return
+    movePassenger(
+      activity.id,
+      activeTab,
+      moveTarget.passenger.user.id,
+      moveTarget.fromCarOfferId,
+      toCarOfferId
+    )
+    setMoveTarget(null)
   }
 
   const generateShareText = () => {
@@ -189,39 +236,66 @@ export default function FleetGroup() {
                 </div>
 
                 {currentGroup.cars.map((car, i) => {
-                  const allAreas = Array.from(
-                    new Set([car.driverPickupArea, ...car.passengers.map((p) => p.pickupArea)])
-                  )
+                  const carOffer = getCarOffer(car.carOfferId)
+                  const remaining = carOffer ? carOffer.availableSeats - car.passengers.length : 0
+                  const isOverload = remaining < 0
                   return (
-                    <div key={i} className="glass-card p-4">
-                      <div className="flex items-center gap-3 mb-3">
-                        <div className="w-8 h-8 bg-neon-gradient rounded-full flex items-center justify-center text-white text-sm font-bold">
-                          {i + 1}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <UserAvatar nickname={car.driver.nickname} isCarOwner size="sm" />
-                          <div>
-                            <p className="text-sm text-white font-medium">{car.driver.nickname}</p>
-                            <p className="text-xs text-neon-pink">司机 · 上车 {car.driverPickupArea}</p>
+                    <div key={i} className={`glass-card p-4 ${isOverload ? 'border-red-500/50' : ''}`}>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-neon-gradient rounded-full flex items-center justify-center text-white text-sm font-bold">
+                            {i + 1}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <UserAvatar nickname={car.driver.nickname} isCarOwner size="sm" />
+                            <div>
+                              <p className="text-sm text-white font-medium">{car.driver.nickname}</p>
+                              <p className="text-xs text-neon-pink">司机 · {car.driverPickupArea}</p>
+                            </div>
                           </div>
                         </div>
+                        <div className="text-right">
+                          <p className={`text-xs font-medium ${remaining > 0 ? 'text-neon-green' : remaining === 0 ? 'text-neon-gold' : 'text-red-400'}`}>
+                            剩 {remaining} 座
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {car.passengers.length}/{carOffer?.availableSeats || 0}
+                          </p>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 text-xs gold-text bg-neon-gold/10 rounded-lg p-2 border border-neon-gold/20 mb-2">
-                        <MapPin size={12} /> 接人区域: {allAreas.join('、')}
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-gray-400 bg-night-700/30 rounded-lg p-2 mb-3">
-                        <Car size={12} className="text-neon-pink/60" />
+
+                      <div className="flex items-center gap-2 text-xs text-gray-400 bg-night-700/30 rounded-lg p-2 mb-2">
+                        <Car size={12} className="text-neon-pink/60 shrink-0" />
                         {car.route}
                       </div>
+
+                      <div className="flex items-center gap-2 text-xs gold-text bg-neon-gold/10 rounded-lg p-2 border border-neon-gold/20 mb-3">
+                        <MapPin size={12} /> 接人顺序: 
+                        {activeTab === 'outbound'
+                          ? car.route.split(' → ').slice(0, -1).join(' → ')
+                          : car.route.split(' → ').slice(1).join(' → ')}
+                      </div>
+
                       {car.passengers.length > 0 ? (
                         <div className="space-y-1.5">
                           {car.passengers.map((p, j) => (
-                            <div key={j} className="flex items-center justify-between bg-night-700/50 rounded-lg px-3 py-1.5">
+                            <div
+                              key={j}
+                              className="flex items-center justify-between bg-night-700/50 rounded-lg px-3 py-2 group"
+                            >
                               <div className="flex items-center gap-2">
+                                <span className="text-xs text-neon-gold w-5">{j + 1}</span>
                                 <Users size={10} className="text-neon-blue/60" />
                                 <span className="text-xs text-gray-300">{p.user.nickname}</span>
+                                <span className="text-xs text-neon-gold/70">({p.pickupArea})</span>
                               </div>
-                              <span className="text-xs text-neon-gold">{p.pickupArea}</span>
+                              <button
+                                onClick={() => handleMoveClick(p, car.carOfferId)}
+                                className="text-gray-500 hover:text-neon-pink transition-colors opacity-0 group-hover:opacity-100"
+                                title="移动到其他车"
+                              >
+                                <MoveRight size={14} />
+                              </button>
                             </div>
                           ))}
                         </div>
@@ -281,6 +355,61 @@ export default function FleetGroup() {
                 关闭
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {moveTarget && currentGroup && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-end justify-center sm:items-center"
+          onClick={() => setMoveTarget(null)}
+        >
+          <div
+            className="glass-card p-5 w-full max-w-lg animate-slide-up sm:rounded-2xl rounded-t-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-display text-lg text-white mb-1">移动乘客</h3>
+            <p className="text-sm text-gray-400 mb-4">
+              将 <span className="text-neon-pink">{moveTarget.passenger.user.nickname}</span> 移动到哪辆车？
+            </p>
+            <div className="space-y-2">
+              {currentGroup.cars
+                .filter((c) => c.carOfferId !== moveTarget.fromCarOfferId)
+                .map((car, idx) => {
+                  const carOffer = getCarOffer(car.carOfferId)
+                  const remaining = carOffer ? carOffer.availableSeats - car.passengers.length : 0
+                  const canMove = remaining > 0
+                  return (
+                    <button
+                      key={car.carOfferId}
+                      onClick={() => canMove && handleMoveConfirm(car.carOfferId)}
+                      disabled={!canMove}
+                      className={`w-full flex items-center justify-between p-3 rounded-xl transition-all ${
+                        canMove
+                          ? 'bg-night-700/70 hover:bg-night-600/70 text-white'
+                          : 'bg-night-800/50 text-gray-600 cursor-not-allowed'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 bg-neon-gradient rounded-full flex items-center justify-center text-white text-xs font-bold">
+                          {idx + 1}
+                        </div>
+                        <span className="text-sm">{car.driver.nickname} 的车</span>
+                      </div>
+                      <span className={`text-xs ${canMove ? 'text-neon-green' : 'text-gray-600'}`}>
+                        剩 {remaining} 座
+                        {!canMove && ' · 满员'}
+                      </span>
+                    </button>
+                  )
+                })}
+            </div>
+            <button
+              onClick={() => setMoveTarget(null)}
+              className="ghost-btn w-full mt-4"
+            >
+              取消
+            </button>
           </div>
         </div>
       )}

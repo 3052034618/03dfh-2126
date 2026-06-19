@@ -1,14 +1,23 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  MapPin, CheckCircle, Clock, AlertTriangle, Car, Bell, CarFront, X,
+  MapPin,
+  CheckCircle,
+  Clock,
+  AlertTriangle,
+  Car,
+  Bell,
+  CarFront,
+  X,
+  Megaphone,
+  Users,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { useStore } from '@/store/useStore'
 import PageHeader from '@/components/PageHeader'
 import UserAvatar from '@/components/UserAvatar'
-import type { CheckinStatus, Player } from '@/types'
+import type { CheckinStatus, Player, ReminderTarget } from '@/types'
 
 const typeIcons: Record<string, typeof MapPin> = {
   car_offer: Car,
@@ -17,6 +26,9 @@ const typeIcons: Record<string, typeof MapPin> = {
   late: Clock,
   ride_change: CarFront,
   restore: AlertTriangle,
+  reminder_not_arrived: Bell,
+  reminder_late: Megaphone,
+  reminder_ride_share: Car,
 }
 
 const typeColors: Record<string, string> = {
@@ -26,6 +38,9 @@ const typeColors: Record<string, string> = {
   late: 'text-neon-gold',
   ride_change: 'text-neon-blue',
   restore: 'text-gray-400',
+  reminder_not_arrived: 'text-neon-pink',
+  reminder_late: 'text-neon-gold',
+  reminder_ride_share: 'text-neon-blue',
 }
 
 const typeDotColors: Record<string, string> = {
@@ -35,7 +50,13 @@ const typeDotColors: Record<string, string> = {
   late: 'bg-neon-gold',
   ride_change: 'bg-neon-blue',
   restore: 'bg-gray-500',
+  reminder_not_arrived: 'bg-neon-pink',
+  reminder_late: 'bg-neon-gold',
+  reminder_ride_share: 'bg-neon-blue',
 }
+
+const isReminderType = (type: string) =>
+  type.startsWith('reminder_')
 
 const statusLabels: Record<CheckinStatus, { label: string; cls: string }> = {
   not_arrived: { label: '未到', cls: 'bg-gray-600/20 text-gray-500' },
@@ -50,10 +71,12 @@ export default function CheckIn() {
   const getActivity = useStore((s) => s.getActivity)
   const checkin = useStore((s) => s.checkin)
   const setPlayerStatus = useStore((s) => s.setPlayerStatus)
+  const sendReminder = useStore((s) => s.sendReminder)
   const currentUser = useStore((s) => s.currentUser)
   const notifications = useStore((s) => s.notifications)
   const activity = getActivity(activityId || '')
   const [menuPlayer, setMenuPlayer] = useState<Player | null>(null)
+  const [reminderToast, setReminderToast] = useState<string | null>(null)
 
   const activityNotifications = notifications.filter((n) => n.activityId === activityId)
   const sortedNotifications = [...activityNotifications].sort(
@@ -90,6 +113,16 @@ export default function CheckIn() {
     if (!menuPlayer) return
     setPlayerStatus(activity.id, menuPlayer.user.id, status)
     setMenuPlayer(null)
+  }
+
+  const handleSendReminder = (target: ReminderTarget) => {
+    const count = sendReminder(activity.id, target)
+    if (count > 0) {
+      const label =
+        target === 'not_arrived' ? '未到' : target === 'late' ? '迟到' : target === 'ride_share' ? '网约车' : '全员'
+      setReminderToast(`已向 ${count} 位${label}玩家发送提醒`)
+      setTimeout(() => setReminderToast(null), 2500)
+    }
   }
 
   return (
@@ -174,9 +207,57 @@ export default function CheckIn() {
         </div>
 
         <div className="glass-card p-4">
+          <h3 className="font-display text-lg text-white flex items-center gap-2 mb-3">
+            <Megaphone size={18} className="text-neon-pink" />
+            发车前提醒
+          </h3>
+          <p className="text-xs text-gray-500 mb-3">
+            一键给不同状态的玩家发送提醒，时间线可看到提醒记录
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              onClick={() => handleSendReminder('not_arrived')}
+              disabled={notArrivedCount === 0}
+              className={`flex flex-col items-center gap-1 p-3 rounded-xl transition-all ${
+                notArrivedCount > 0
+                  ? 'bg-gray-600/10 hover:bg-gray-600/20 text-gray-300'
+                  : 'bg-night-800/50 text-gray-600 cursor-not-allowed'
+              }`}
+            >
+              <Users size={18} className={notArrivedCount > 0 ? 'text-gray-400' : 'text-gray-700'} />
+              <span className="text-xs font-medium">未到 {notArrivedCount}人</span>
+            </button>
+            <button
+              onClick={() => handleSendReminder('late')}
+              disabled={lateCount === 0}
+              className={`flex flex-col items-center gap-1 p-3 rounded-xl transition-all ${
+                lateCount > 0
+                  ? 'bg-neon-gold/10 hover:bg-neon-gold/20 text-neon-gold'
+                  : 'bg-night-800/50 text-gray-600 cursor-not-allowed'
+              }`}
+            >
+              <Clock size={18} />
+              <span className="text-xs font-medium">迟到 {lateCount}人</span>
+            </button>
+            <button
+              onClick={() => handleSendReminder('ride_share')}
+              disabled={rideShareCount === 0}
+              className={`flex flex-col items-center gap-1 p-3 rounded-xl transition-all ${
+                rideShareCount > 0
+                  ? 'bg-neon-blue/10 hover:bg-neon-blue/20 text-neon-blue'
+                  : 'bg-night-800/50 text-gray-600 cursor-not-allowed'
+              }`}
+            >
+              <CarFront size={18} />
+              <span className="text-xs font-medium">网约车 {rideShareCount}人</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="glass-card p-4">
           <h3 className="font-display text-lg text-white flex items-center gap-2 mb-4">
             <Bell size={18} className="text-neon-gold" />
-            变更通知
+            通知时间线
           </h3>
 
           {sortedNotifications.length > 0 ? (
@@ -187,6 +268,7 @@ export default function CheckIn() {
                   const Icon = typeIcons[notification.type] || AlertTriangle
                   const color = typeColors[notification.type] || 'text-gray-400'
                   const dotColor = typeDotColors[notification.type] || 'bg-gray-400'
+                  const isReminder = isReminderType(notification.type)
                   return (
                     <div key={i} className="flex gap-3 relative">
                       <div
@@ -194,10 +276,19 @@ export default function CheckIn() {
                       >
                         <div className={`w-2 h-2 rounded-full ${dotColor}`} />
                       </div>
-                      <div className="flex-1 bg-night-700/30 rounded-xl p-3">
+                      <div
+                        className={`flex-1 rounded-xl p-3 ${
+                          isReminder ? 'bg-neon-pink/5 border border-neon-pink/20' : 'bg-night-700/30'
+                        }`}
+                      >
                         <div className="flex items-start gap-2">
                           <Icon size={14} className={`${color} mt-0.5 shrink-0`} />
                           <div className="flex-1">
+                            {isReminder && (
+                              <p className="text-[10px] text-neon-pink/80 mb-0.5 font-medium">
+                                🔔 提醒消息
+                              </p>
+                            )}
                             <p className="text-sm text-gray-300">{notification.content}</p>
                             <p className="text-xs text-gray-500 mt-1">
                               {format(new Date(notification.timestamp), 'M月d日 HH:mm', {
@@ -213,10 +304,18 @@ export default function CheckIn() {
               </div>
             </div>
           ) : (
-            <p className="text-center text-gray-500 py-8">暂无变更通知</p>
+            <p className="text-center text-gray-500 py-8">暂无通知</p>
           )}
         </div>
       </div>
+
+      {reminderToast && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-slide-down">
+          <div className="bg-neon-green/90 text-white px-5 py-2.5 rounded-full text-sm font-medium shadow-lg shadow-neon-green/30">
+            ✓ {reminderToast}
+          </div>
+        </div>
+      )}
 
       {menuPlayer && (
         <div
